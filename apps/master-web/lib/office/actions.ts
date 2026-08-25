@@ -246,7 +246,7 @@ export async function dispatchOfficeAction(
           id: agentId,
           kind: "openclaw",
           name: agent?.name ?? parsed.rest,
-          status: "blocked",
+          status: "waiting",
           task: `Plan · ${started.project.title}`.slice(0, 80),
           currentAction: "attente validation plan",
           lastSeenAt: new Date().toISOString(),

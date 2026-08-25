@@ -435,7 +435,7 @@ export function tickOrchestration(projectId: string): {
         return t?.status === "done";
       }),
     );
-    if (gate && orch.phase !== "awaiting_delivery_approval") {
+    if (gate) {
       const next: OrchestrationState = {
         ...orch,
         phase: "awaiting_delivery_approval",
