@@ -1,0 +1,59 @@
+# Master Panel — KPI dashboard + pipeline orchestrator (master.pixelbrain.fr)
+
+name: master-panel
+
+services:
+  master-web:
+    build:
+      context: ../../apps/master-web
+      dockerfile: Dockerfile
+    container_name: master-web
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "3040"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /:/host/root:ro
+      - master-data:/data
+    group_add:
+      - "999"
+    networks:
+      - proxy
+    environment:
+      HOSTNAME: "0.0.0.0"
+      PORT: "3040"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3040/login || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 512m
+
+  master-orchestrator:
+    build:
+      context: ../../apps/orchestrator
+      dockerfile: Dockerfile
+    container_name: master-orchestrator
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MASTER_URL: http://master-web:3040
+      WORKER_ID: orchestrator-vps
+    depends_on:
+      - master-web
+    networks:
+      - proxy
+    mem_limit: 384m
+    cpus: 0.5
+
+networks:
+  proxy:
+    external: true
+    # Historique: docker_ekowrk-network (EchoWork). Alias logique: pixelbrain-net
+    # Migration: ./deploy/scripts/migrate-docker-network.sh
+    name: ${PIXELBRAIN_DOCKER_NETWORK:-docker_ekowrk-network}
+
+volumes:
+  master-data:

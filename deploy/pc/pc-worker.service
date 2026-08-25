@@ -1,0 +1,17 @@
+[Unit]
+Description=Master PC Agent (Ollama + office jobs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/Master/apps/pc-worker
+Environment=DISPLAY=:0
+Environment=PATH=%h/.local/bin:%h/.nvm/versions/node/v22.23.2/bin:/usr/local/bin:/usr/bin
+EnvironmentFile=%h/code/Master/apps/pc-worker/.env
+ExecStart=%h/.nvm/versions/node/v22.23.2/bin/npx tsx src/index.ts
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,36 @@
+[
+  {
+    "id": "client-acme",
+    "name": "Acme SAS",
+    "projects": [
+      {
+        "name": "Site vitrine",
+        "urls": {
+          "prod": "https://acme.com",
+          "staging": "https://staging.acme.com"
+        },
+        "appId": "pixelbraincard",
+        "contacts": [
+          {
+            "name": "Jean Dupont",
+            "email": "j@acme.com",
+            "phone": "+33600000000"
+          }
+        ],
+        "invoices": [
+          {
+            "label": "Facture mars 2026",
+            "url": "https://invoice.stripe.com/i/example",
+            "stripeInvoiceId": "in_example"
+          }
+        ],
+        "docs": [
+          {
+            "label": "Cahier des charges",
+            "url": "https://drive.google.com/example"
+          }
+        ]
+      }
+    ]
+  }
+]

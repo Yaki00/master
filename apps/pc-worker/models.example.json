@@ -1,0 +1,5 @@
+{
+  "fast": "llama3.2:3b",
+  "reason": "qwen2.5:7b",
+  "vision": "llava:7b"
+}

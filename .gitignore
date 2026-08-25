@@ -1,0 +1,18 @@
+.env
+deploy/.env
+*.sql.gz
+.cursor/secrets/mcp.env
+data/clients.json
+apps/master-web/data/
+node_modules/
+**/node_modules/
+apps/*/.env
+deploy/pc/.env
+
+# Build / cache
+**/.next/
+**/dist/
+**/.turbo/
+*.tsbuildinfo
+.DS_Store
+

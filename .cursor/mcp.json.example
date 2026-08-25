@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "stripe-test": {
+      "url": "https://mcp.stripe.com"
+    },
+    "infisical": {
+      "command": "npx",
+      "args": ["-y", "@infisical/mcp"],
+      "env": {
+        "INFISICAL_HOST_URL": "https://secrets.pixelbrain.fr",
+        "INFISICAL_AUTH_METHOD": "universal-auth",
+        "INFISICAL_UNIVERSAL_AUTH_CLIENT_ID": "${env:INFISICAL_UNIVERSAL_AUTH_CLIENT_ID}",
+        "INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET": "${env:INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET}"
+      }
+    },
+    "ovh-dns": {
+      "command": "npx",
+      "args": ["-y", "mcp-server-ovh"],
+      "env": {
+        "OVH_ENDPOINT": "ovh-eu",
+        "OVH_APP_KEY": "${env:OVH_APP_KEY}",
+        "OVH_APP_SECRET": "${env:OVH_APP_SECRET}",
+        "OVH_CONSUMER_KEY": "${env:OVH_CONSUMER_KEY}"
+      }
+    }
+  }
+}

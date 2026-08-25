@@ -1,0 +1,19 @@
+{
+  "name": "pc-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "screen": "tsx src/screen.ts"
+  },
+  "dependencies": {
+    "@cursor/sdk": "^1.0.24"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

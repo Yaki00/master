@@ -1,0 +1,61 @@
+# Infisical self-hosted — VPS Pixel Brain
+# Réseau partagé avec nginx (docker_ekowrk-network), pas de port hôte exposé.
+
+name: infisical
+
+services:
+  backend:
+    container_name: infisical-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    image: infisical/infisical:latest
+    pull_policy: always
+    env_file: .env
+    expose:
+      - "8080"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - infisical
+      - proxy
+
+  redis:
+    image: redis:7-alpine
+    container_name: infisical-redis
+    env_file: .env
+    restart: unless-stopped
+    networks:
+      - infisical
+    volumes:
+      - redis_data:/data
+
+  db:
+    container_name: infisical-db
+    image: postgres:14-alpine
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - infisical
+    healthcheck:
+      test: "pg_isready --username=${POSTGRES_USER} && psql --username=${POSTGRES_USER} --list"
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  pg_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  infisical:
+  proxy:
+    external: true
+    name: docker_ekowrk-network
