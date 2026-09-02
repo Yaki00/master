@@ -227,6 +227,102 @@ function initSchema(database: Database.Database) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_office_task_events_task ON office_task_events(task_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS job_hunt_profile (
+      id TEXT PRIMARY KEY DEFAULT 'default',
+      full_name TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      timezone TEXT NOT NULL DEFAULT 'Europe/Paris',
+      cv_base TEXT NOT NULL DEFAULT '',
+      stack TEXT NOT NULL DEFAULT '[]',
+      languages TEXT NOT NULL DEFAULT '[]',
+      min_salary_eur INTEGER,
+      remote_only INTEGER NOT NULL DEFAULT 1,
+      preferred_regions TEXT NOT NULL DEFAULT '[]',
+      cover_letter_template TEXT NOT NULL DEFAULT '',
+      platforms TEXT NOT NULL DEFAULT '[]',
+      target_roles TEXT NOT NULL DEFAULT '[]',
+      cv_file_name TEXT NOT NULL DEFAULT '',
+      cv_analyzed_at TEXT,
+      auto_search_enabled INTEGER NOT NULL DEFAULT 1,
+      auto_apply_enabled INTEGER NOT NULL DEFAULT 1,
+      min_score_auto_apply INTEGER NOT NULL DEFAULT 55,
+      max_applications_per_day INTEGER NOT NULL DEFAULT 8,
+      search_interval_hours INTEGER NOT NULL DEFAULT 4,
+      last_search_at TEXT,
+      last_auto_run_at TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS job_hunt_listings (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      company TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL,
+      apply_url TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'manual',
+      description TEXT NOT NULL DEFAULT '',
+      requirements TEXT NOT NULL DEFAULT '',
+      benefits TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      salary TEXT NOT NULL DEFAULT '',
+      employment_type TEXT NOT NULL DEFAULT '',
+      remote_type TEXT NOT NULL DEFAULT 'remote',
+      posted_at TEXT,
+      tags TEXT NOT NULL DEFAULT '[]',
+      score INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'new',
+      tailored_cv TEXT NOT NULL DEFAULT '',
+      cover_letter TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      agent_result TEXT NOT NULL DEFAULT '',
+      agent_error TEXT NOT NULL DEFAULT '',
+      meta TEXT NOT NULL DEFAULT '{}',
+      pc_job_id TEXT,
+      applied_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_hunt_listings_status ON job_hunt_listings(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_job_hunt_listings_score ON job_hunt_listings(score DESC);
+    CREATE INDEX IF NOT EXISTS idx_job_hunt_listings_applied ON job_hunt_listings(applied_at DESC);
+
+    CREATE TABLE IF NOT EXISTS job_hunt_events (
+      id TEXT PRIMARY KEY,
+      listing_id TEXT,
+      kind TEXT NOT NULL,
+      message TEXT NOT NULL DEFAULT '',
+      payload TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_hunt_events_listing ON job_hunt_events(listing_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS job_hunt_search_runs (
+      id TEXT PRIMARY KEY,
+      sources TEXT NOT NULL DEFAULT '[]',
+      min_score INTEGER NOT NULL DEFAULT 40,
+      imported_count INTEGER NOT NULL DEFAULT 0,
+      skipped_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_hunt_search_runs_created ON job_hunt_search_runs(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS job_hunt_search_decisions (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      company TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT '',
+      score INTEGER,
+      decision TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      listing_id TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_hunt_search_decisions_run ON job_hunt_search_decisions(run_id, created_at DESC);
   `);
   migrateOfficeSchema(database);
 }
@@ -250,6 +346,58 @@ function migrateOfficeSchema(database: Database.Database) {
   ensureColumn(database, "ai_projects", "next_run_at", "next_run_at TEXT");
   ensureColumn(database, "ai_projects", "team_id", "team_id TEXT");
   ensureColumn(database, "ai_projects", "meta", "meta TEXT");
+  ensureColumn(database, "job_hunt_profile", "target_roles", "target_roles TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(database, "job_hunt_profile", "cv_file_name", "cv_file_name TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "job_hunt_profile", "cv_analyzed_at", "cv_analyzed_at TEXT");
+  ensureColumn(database, "job_hunt_profile", "auto_search_enabled", "auto_search_enabled INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(database, "job_hunt_profile", "auto_apply_enabled", "auto_apply_enabled INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(database, "job_hunt_profile", "min_score_auto_apply", "min_score_auto_apply INTEGER NOT NULL DEFAULT 55");
+  ensureColumn(database, "job_hunt_profile", "max_applications_per_day", "max_applications_per_day INTEGER NOT NULL DEFAULT 8");
+  ensureColumn(database, "job_hunt_profile", "search_interval_hours", "search_interval_hours INTEGER NOT NULL DEFAULT 4");
+  ensureColumn(database, "job_hunt_profile", "last_search_at", "last_search_at TEXT");
+  ensureColumn(database, "job_hunt_profile", "last_auto_run_at", "last_auto_run_at TEXT");
+  ensureColumn(database, "job_hunt_listings", "apply_url", "apply_url TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "job_hunt_listings", "requirements", "requirements TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "job_hunt_listings", "benefits", "benefits TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "job_hunt_listings", "employment_type", "employment_type TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "job_hunt_listings", "posted_at", "posted_at TEXT");
+  ensureColumn(database, "job_hunt_listings", "agent_result", "agent_result TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "job_hunt_listings", "agent_error", "agent_error TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "job_hunt_listings", "meta", "meta TEXT NOT NULL DEFAULT '{}'");
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS job_hunt_events (
+      id TEXT PRIMARY KEY,
+      listing_id TEXT,
+      kind TEXT NOT NULL,
+      message TEXT NOT NULL DEFAULT '',
+      payload TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_hunt_events_listing ON job_hunt_events(listing_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS job_hunt_search_runs (
+      id TEXT PRIMARY KEY,
+      sources TEXT NOT NULL DEFAULT '[]',
+      min_score INTEGER NOT NULL DEFAULT 40,
+      imported_count INTEGER NOT NULL DEFAULT 0,
+      skipped_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_hunt_search_runs_created ON job_hunt_search_runs(created_at DESC);
+    CREATE TABLE IF NOT EXISTS job_hunt_search_decisions (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      company TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT '',
+      score INTEGER,
+      decision TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      listing_id TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_hunt_search_decisions_run ON job_hunt_search_decisions(run_id, created_at DESC);
+  `);
   database.exec(`
     CREATE TABLE IF NOT EXISTS office_secrets (
       key TEXT PRIMARY KEY,

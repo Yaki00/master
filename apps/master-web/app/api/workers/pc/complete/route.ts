@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { appendJobEvent, getJob, updateJob } from "@/lib/db/jobs";
+import { handleJobHuntJobComplete } from "@/lib/job-hunt/engine";
 import { assertWorkerAuth } from "@/lib/pipeline/auth";
 import { SECURITY_HEADERS } from "@/lib/security";
 
@@ -57,6 +58,10 @@ export async function POST(req: Request) {
     resultText: resultText?.slice(0, 500),
     error,
   });
+
+  if (existing.waChatId === "job-hunt") {
+    handleJobHuntJobComplete({ jobId, status, resultText, error });
+  }
 
   // Canal WhatsApp retiré — les jobs bureau (channel office) restent visibles dans /agents.
   void body.notify;

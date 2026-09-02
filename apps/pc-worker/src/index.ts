@@ -33,8 +33,23 @@ async function heartbeat() {
       workerId: WORKER_ID,
       hostname: osHostname(),
       meta: { role: "pc", cwd: LOCAL_CWD, runner: "pc-agent" },
+      jobHuntSync: true,
     }),
   });
+}
+
+async function triggerJobHuntOnBoot() {
+  try {
+    const res = await fetch(`${MASTER_URL}/api/job-hunt/run`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ forceSearch: false }),
+    });
+    const data = (await res.json()) as { ok?: boolean; skipped?: string; search?: { imported?: number } };
+    console.log("[pc-worker] job-hunt boot sync", res.status, data.skipped ?? data.search?.imported ?? "ok");
+  } catch (err) {
+    console.warn("[pc-worker] job-hunt boot sync failed", err);
+  }
 }
 
 async function claim(): Promise<Job | null> {
@@ -145,6 +160,8 @@ async function loop() {
     runner: "pc-agent",
     models: cfg.models,
   });
+
+  await triggerJobHuntOnBoot();
 
   for (;;) {
     try {
