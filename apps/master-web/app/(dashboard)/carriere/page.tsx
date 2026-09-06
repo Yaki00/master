@@ -81,7 +81,7 @@ export default function CarrierePage() {
 
   const [credentials, setCredentials] = useState<JobPlatformCredential[]>([]);
   const [credDrafts, setCredDrafts] = useState<
-    Record<string, { email: string; password: string; loginUrl: string; notes: string; useGoogleSso: boolean }>
+    Record<string, { email: string; loginUrl: string; notes: string; useGoogleSso: boolean }>
   >({});
 
   const [newTitle, setNewTitle] = useState("");
@@ -109,7 +109,6 @@ export default function CarrierePage() {
       for (const c of credJson.credentials) {
         drafts[c.platform] = {
           email: c.email,
-          password: "",
           loginUrl: c.loginUrl,
           notes: c.notes,
           useGoogleSso: c.useGoogleSso,
@@ -275,9 +274,47 @@ export default function CarrierePage() {
       await fetch("/api/job-hunt/credentials", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform, ...draft, password: draft.password || undefined }),
+        body: JSON.stringify({ platform, action: "save", ...draft }),
       });
       await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openPlatformLogin(platform: string) {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/job-hunt/credentials", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform, action: "open_login" }),
+      });
+      const json = (await res.json()) as { error?: string; message?: string; credentials?: JobPlatformCredential[] };
+      if (!res.ok) throw new Error(json.error || `Erreur ${res.status}`);
+      if (json.credentials) setCredentials(json.credentials);
+      setError(null);
+      setCvAnalysisMsg(json.message ?? "Navigateur ouvert sur le PC");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Impossible d'ouvrir la connexion");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markPlatformSession(platform: string, ready: boolean) {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/job-hunt/credentials", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform, action: "mark_session", sessionReady: ready }),
+      });
+      const json = (await res.json()) as { error?: string; credentials?: JobPlatformCredential[] };
+      if (!res.ok) throw new Error(json.error || `Erreur ${res.status}`);
+      if (json.credentials) setCredentials(json.credentials);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur session");
     } finally {
       setBusy(false);
     }
@@ -556,21 +593,102 @@ export default function CarrierePage() {
         </div>
       ) : (
         <div className="space-y-4">
-          <Card padding="sm"><p className="text-xs text-zinc-500">Google Password Manager par défaut. Identifiants de secours chiffrés dans Master.</p></Card>
+          <Card padding="sm">
+            <p className="text-sm text-zinc-300">Connexion manuelle sur le PC — pas de mot de passe stocké</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Master ouvre Chrome avec un profil dédié (<code className="text-zinc-400">~/.master-pc-agent/browser-profile</code>).
+              Vous vous connectez une fois (LinkedIn, Google SSO, etc.) ; les cookies restent pour les candidatures.
+            </p>
+          </Card>
           {credentials.map((cred) => {
-            const draft = credDrafts[cred.platform] ?? { email: cred.email, password: "", loginUrl: cred.loginUrl, notes: cred.notes, useGoogleSso: cred.useGoogleSso };
+            const draft =
+              credDrafts[cred.platform] ?? {
+                email: cred.email,
+                loginUrl: cred.loginUrl,
+                notes: cred.notes,
+                useGoogleSso: cred.useGoogleSso,
+              };
             return (
               <Card key={cred.platform}>
-                <h3 className="mb-3 text-sm font-medium text-white">{cred.label}</h3>
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-medium text-white">{cred.label}</h3>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ${
+                      cred.sessionReady
+                        ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
+                        : "bg-zinc-500/15 text-zinc-400 ring-zinc-500/30"
+                    }`}
+                  >
+                    {cred.sessionReady ? "Session OK" : "Non connecté"}
+                  </span>
+                </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <input placeholder="Email" className="rounded-lg border border-surface-border bg-surface px-3 py-2 text-sm text-white" value={draft.email} onChange={(e) => setCredDrafts((p) => ({ ...p, [cred.platform]: { ...draft, email: e.target.value } }))} />
-                  <input type="password" placeholder={cred.passwordSet ? "•••• (inchangé)" : "Mot de passe"} className="rounded-lg border border-surface-border bg-surface px-3 py-2 text-sm text-white" value={draft.password} onChange={(e) => setCredDrafts((p) => ({ ...p, [cred.platform]: { ...draft, password: e.target.value } }))} />
+                  <input
+                    placeholder="Email (indicatif, optionnel)"
+                    className="rounded-lg border border-surface-border bg-surface px-3 py-2 text-sm text-white"
+                    value={draft.email}
+                    onChange={(e) =>
+                      setCredDrafts((p) => ({ ...p, [cred.platform]: { ...draft, email: e.target.value } }))
+                    }
+                  />
+                  <input
+                    placeholder="URL login"
+                    className="rounded-lg border border-surface-border bg-surface px-3 py-2 text-sm text-white"
+                    value={draft.loginUrl}
+                    onChange={(e) =>
+                      setCredDrafts((p) => ({ ...p, [cred.platform]: { ...draft, loginUrl: e.target.value } }))
+                    }
+                  />
                   <label className="flex items-center gap-2 text-sm text-zinc-400 sm:col-span-2">
-                    <input type="checkbox" checked={draft.useGoogleSso} onChange={(e) => setCredDrafts((p) => ({ ...p, [cred.platform]: { ...draft, useGoogleSso: e.target.checked } }))} />
-                    Continuer avec Google
+                    <input
+                      type="checkbox"
+                      checked={draft.useGoogleSso}
+                      onChange={(e) =>
+                        setCredDrafts((p) => ({
+                          ...p,
+                          [cred.platform]: { ...draft, useGoogleSso: e.target.checked },
+                        }))
+                      }
+                    />
+                    Préférer « Continuer avec Google » si proposé
                   </label>
                 </div>
-                <button type="button" disabled={busy} onClick={() => void saveCredential(cred.platform)} className="mt-3 rounded-lg bg-surface px-4 py-2 text-xs text-zinc-300 ring-1 ring-surface-border">Enregistrer</button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={busy || !auto?.pcOnline}
+                    onClick={() => void openPlatformLogin(cred.platform)}
+                    className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                  >
+                    Ouvrir sur le PC
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void markPlatformSession(cred.platform, true)}
+                    className="rounded-lg bg-emerald-600/90 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                  >
+                    J&apos;ai terminé la connexion
+                  </button>
+                  {cred.sessionReady && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void markPlatformSession(cred.platform, false)}
+                      className="rounded-lg bg-surface px-4 py-2 text-xs text-zinc-400 ring-1 ring-surface-border disabled:opacity-50"
+                    >
+                      Marquer déconnecté
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void saveCredential(cred.platform)}
+                    className="rounded-lg bg-surface px-4 py-2 text-xs text-zinc-300 ring-1 ring-surface-border disabled:opacity-50"
+                  >
+                    Enregistrer notes
+                  </button>
+                </div>
               </Card>
             );
           })}

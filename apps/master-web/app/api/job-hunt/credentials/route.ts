@@ -4,8 +4,10 @@ import { authOptions } from "@/lib/auth";
 import {
   deletePlatformCredential,
   listPlatformCredentials,
+  markPlatformSession,
   savePlatformCredential,
 } from "@/lib/job-hunt/credentials";
+import { enqueuePlatformLoginJob } from "@/lib/job-hunt/engine";
 import { SECURITY_HEADERS } from "@/lib/security";
 
 export const dynamic = "force-dynamic";
@@ -33,19 +35,46 @@ export async function PATCH(req: Request) {
     return withSecurity(NextResponse.json({ error: "platform requis" }, { status: 400 }));
   }
 
+  const action = String(body.action ?? "save");
+
+  if (action === "open_login") {
+    const result = enqueuePlatformLoginJob(platform);
+    if (!result.ok) {
+      return withSecurity(NextResponse.json({ error: result.error }, { status: 400 }));
+    }
+    return withSecurity(
+      NextResponse.json({
+        ok: true,
+        jobId: result.jobId,
+        message: "Navigateur ouvert sur le PC — connectez-vous, puis cliquez « J'ai terminé »",
+        credentials: listPlatformCredentials(),
+      }),
+    );
+  }
+
+  if (action === "mark_session") {
+    const ready = body.sessionReady !== false;
+    const saved = markPlatformSession(platform, ready);
+    if (!saved) {
+      return withSecurity(NextResponse.json({ error: "plateforme inconnue" }, { status: 400 }));
+    }
+    return withSecurity(NextResponse.json({ ok: true, credential: saved, credentials: listPlatformCredentials() }));
+  }
+
+  // Ne plus accepter de password — ignoré volontairement
   const saved = savePlatformCredential(platform, {
     loginUrl: body.loginUrl != null ? String(body.loginUrl) : undefined,
     email: body.email != null ? String(body.email) : undefined,
-    password: body.password != null ? String(body.password) : undefined,
     useGoogleSso: body.useGoogleSso != null ? Boolean(body.useGoogleSso) : undefined,
+    sessionReady: body.sessionReady != null ? Boolean(body.sessionReady) : undefined,
     notes: body.notes != null ? String(body.notes) : undefined,
   });
 
   if (!saved) {
-    return withSecurity(NextResponse.json({ error: "plateforme inconnue" }, { status: 404 }));
+    return withSecurity(NextResponse.json({ error: "plateforme inconnue" }, { status: 400 }));
   }
 
-  return withSecurity(NextResponse.json({ ok: true, credential: saved }));
+  return withSecurity(NextResponse.json({ ok: true, credential: saved, credentials: listPlatformCredentials() }));
 }
 
 export async function DELETE(req: Request) {
@@ -60,5 +89,6 @@ export async function DELETE(req: Request) {
     return withSecurity(NextResponse.json({ error: "platform requis" }, { status: 400 }));
   }
 
-  return withSecurity(NextResponse.json({ ok: deletePlatformCredential(platform) }));
+  markPlatformSession(platform, false);
+  return withSecurity(NextResponse.json({ ok: deletePlatformCredential(platform), credentials: listPlatformCredentials() }));
 }

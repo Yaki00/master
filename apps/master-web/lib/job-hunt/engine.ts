@@ -9,9 +9,18 @@ import {
   updateJobHuntProfile,
 } from "@/lib/db/job-hunt";
 import { createJob, getJob, isPcOnline } from "@/lib/db/jobs";
+import {
+  getPlatformCredential,
+  platformNeedsSession,
+  platformSlugFromUrl,
+} from "@/lib/job-hunt/credentials";
 import { buildApplyPrompt, buildTailorPrompt } from "@/lib/job-hunt/prompts";
 import { runAllJobSearches } from "@/lib/job-hunt/search-sources";
-import { JOB_HUNT_MARKER, jobHuntPromptHeader } from "@/lib/job-hunt/types";
+import {
+  JOB_HUNT_MARKER,
+  JOB_PLATFORM_DEFS,
+  jobHuntLoginPromptHeader,
+} from "@/lib/job-hunt/types";
 
 export type AutoRunResult = {
   ok: boolean;
@@ -168,6 +177,21 @@ function enqueueApplyJob(listingId: string): string | null {
   const profile = getJobHuntProfile();
   const listing = getJobHuntListing(listingId);
   if (!listing || !profile.cvBase.trim()) return null;
+
+  const slug = platformSlugFromUrl(listing.url);
+  if (platformNeedsSession(slug)) {
+    const cred = slug ? getPlatformCredential(slug) : null;
+    if (!cred?.sessionReady) {
+      appendJobHuntEvent({
+        listingId,
+        kind: "apply_failed",
+        message: `Connectez-vous d'abord à ${slug} (onglet Comptes → Ouvrir sur le PC)`,
+        payload: { platform: slug, reason: "session_required" },
+      });
+      return null;
+    }
+  }
+
   const prompt = buildApplyPrompt(profile, listing);
   const job = createJob({ target: "agent", prompt, waChatId: "job-hunt" });
   updateJobHuntListing(listingId, { status: "queued", pcJobId: job.id });
@@ -178,6 +202,37 @@ function enqueueApplyJob(listingId: string): string | null {
     payload: { jobId: job.id },
   });
   return job.id;
+}
+
+/** Ouvre le navigateur Job Hunt (profil cookies) sur la page login — l'utilisateur se connecte. */
+export function enqueuePlatformLoginJob(platform: string): {
+  ok: boolean;
+  jobId?: string;
+  error?: string;
+} {
+  if (!isPcOnline()) return { ok: false, error: "PC hors ligne" };
+  const def = JOB_PLATFORM_DEFS.find((d) => d.slug === platform);
+  if (!def) return { ok: false, error: "Plateforme inconnue" };
+
+  const stored = getPlatformCredential(platform);
+  const loginUrl = stored?.loginUrl || def.defaultLoginUrl;
+  if (!loginUrl) return { ok: false, error: "URL de login manquante" };
+
+  const prompt = [
+    jobHuntLoginPromptHeader(platform, loginUrl),
+    `Ouvre le navigateur Job Hunt (profil persistant) sur: ${loginUrl}`,
+    "L'utilisateur se connecte MANUELLEMENT (Google SSO ou formulaire).",
+    "Ne saisis aucun mot de passe.",
+    "Quand la page de login est ouverte, termine avec succès.",
+  ].join("\n");
+
+  const job = createJob({ target: "pc", prompt, waChatId: "job-hunt" });
+  appendJobHuntEvent({
+    kind: "login_opened",
+    message: `Connexion ${def.label} ouverte sur le PC`,
+    payload: { jobId: job.id, platform, loginUrl },
+  });
+  return { ok: true, jobId: job.id };
 }
 
 export async function runJobHuntAutoPipeline(opts?: {

@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { loadAgentConfig } from "./agent/config.js";
+import { openJobHuntBrowser } from "./agent/input.js";
 import { captureScreen } from "./screen.js";
 
 const execFileAsync = promisify(execFile);
@@ -14,11 +16,16 @@ export type PcTaskResult = {
 
 /**
  * Lightweight PC task runner.
+ * - [JOB_HUNT_LOGIN] → navigateur profil persistant
  * - URLs in prompt → open + optional Playwright smoke if PLAYWRIGHT_ENABLED=1
  * - shell: prefix → run allowlisted shell
  * - otherwise echo / note for Cursor local
  */
 export async function runPcTask(prompt: string): Promise<PcTaskResult> {
+  if (/\[JOB_HUNT_LOGIN\]/i.test(prompt)) {
+    return runJobHuntLogin(prompt);
+  }
+
   const shellMatch = prompt.match(/^shell:\s*([\s\S]+)$/i);
   if (shellMatch) {
     return runAllowlistedShell(shellMatch[1]!.trim());
@@ -44,10 +51,37 @@ export async function runPcTask(prompt: string): Promise<PcTaskResult> {
     }
   }
 
+  if (urlMatch && process.platform === "linux") {
+    try {
+      const cfg = loadAgentConfig();
+      const text = await openJobHuntBrowser(cfg, urlMatch[0]!);
+      return { ok: true, text };
+    } catch (err) {
+      return { ok: false, text: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   return {
     ok: true,
     text: `PC a reçu: ${prompt.slice(0, 500)}\n(Utilise shell: <cmd>, une URL, /screen, ou /continue pour Cursor local)`,
   };
+}
+
+async function runJobHuntLogin(prompt: string): Promise<PcTaskResult> {
+  const url =
+    prompt.match(/^url:\s*(\S+)/im)?.[1] ||
+    prompt.match(/https?:\/\/[^\s]+/i)?.[0] ||
+    "https://www.linkedin.com/login";
+  try {
+    const cfg = loadAgentConfig();
+    const text = await openJobHuntBrowser(cfg, url);
+    return {
+      ok: true,
+      text: `${text}\nConnectez-vous manuellement dans cette fenêtre, puis marquez « J'ai terminé » dans Master → Carrière → Comptes.`,
+    };
+  } catch (err) {
+    return { ok: false, text: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 async function runAllowlistedShell(cmd: string): Promise<PcTaskResult> {

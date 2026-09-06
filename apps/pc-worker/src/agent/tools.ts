@@ -89,7 +89,8 @@ export const TOOL_SPEC = `Réponds UNIQUEMENT avec un JSON d'une action parmi:
 {"tool":"hotkey","keys":"ctrl+l","reason":"..."}
 {"tool":"scroll","amount":3,"reason":"..."}
 {"tool":"shell","command":"date","reason":"..."}
-{"tool":"open_app","app":"cursor|terminal|firefox|chatgpt","reason":"..."}
+{"tool":"open_app","app":"chrome|jobhunt|firefox|cursor|terminal|chatgpt","reason":"..."}
+// Pour Job Hunt: open_app chrome (profil cookies ~/.master-pc-agent/browser-profile) — jamais de mots de passe.
 {"tool":"ask_user","question":"...","reason":"..."}
 {"tool":"save_skill","name":"mon-skill","body":"markdown étapes","reason":"..."}
 {"tool":"use_skill","name":"mon-skill","reason":"..."}

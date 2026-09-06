@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { AgentConfig } from "./config.js";
 
@@ -6,6 +9,48 @@ const execFileAsync = promisify(execFile);
 
 function envDisplay(cfg: AgentConfig): NodeJS.ProcessEnv {
   return { ...process.env, DISPLAY: cfg.display };
+}
+
+export function jobHuntProfileDir(): string {
+  return process.env.PC_JOBHUNT_PROFILE || join(homedir(), ".master-pc-agent", "browser-profile");
+}
+
+/** Chrome/Chromium avec profil cookies persistant (LinkedIn, etc.). */
+export async function openJobHuntBrowser(cfg: AgentConfig, url: string): Promise<string> {
+  const profile = jobHuntProfileDir();
+  mkdirSync(profile, { recursive: true });
+  const profileQ = JSON.stringify(profile);
+  const urlQ = JSON.stringify(url);
+
+  const script = `
+set -e
+PROFILE=${profileQ}
+URL=${urlQ}
+mkdir -p "$PROFILE"
+if command -v google-chrome >/dev/null 2>&1; then
+  nohup google-chrome --user-data-dir="$PROFILE" --new-window "$URL" >/dev/null 2>&1 &
+elif command -v google-chrome-stable >/dev/null 2>&1; then
+  nohup google-chrome-stable --user-data-dir="$PROFILE" --new-window "$URL" >/dev/null 2>&1 &
+elif command -v chromium-browser >/dev/null 2>&1; then
+  nohup chromium-browser --user-data-dir="$PROFILE" --new-window "$URL" >/dev/null 2>&1 &
+elif command -v chromium >/dev/null 2>&1; then
+  nohup chromium --user-data-dir="$PROFILE" --new-window "$URL" >/dev/null 2>&1 &
+elif command -v firefox >/dev/null 2>&1; then
+  FF_PROFILE="$PROFILE-firefox"
+  mkdir -p "$FF_PROFILE"
+  nohup firefox --profile "$FF_PROFILE" --new-window "$URL" >/dev/null 2>&1 &
+else
+  echo "Aucun navigateur (chrome/chromium/firefox)" >&2
+  exit 1
+fi
+echo ok
+`;
+
+  await execFileAsync("bash", ["-lc", script], {
+    env: envDisplay(cfg),
+    timeout: 20_000,
+  });
+  return `Navigateur Job Hunt ouvert → ${url} (profil ${profile})`;
 }
 
 async function tryBins(
@@ -105,7 +150,9 @@ export async function openApp(cfg: AgentConfig, app: string): Promise<string> {
     firefox: "firefox",
     chrome: "google-chrome",
     chromium: "chromium-browser",
-    browser: "firefox",
+    browser: "jobhunt",
+    jobhunt: "jobhunt",
+    "job-hunt": "jobhunt",
     files: "nautilus",
     chatgpt: "firefox",
   };
@@ -116,6 +163,11 @@ export async function openApp(cfg: AgentConfig, app: string): Promise<string> {
       env: envDisplay(cfg),
     });
     return `Ouvert ChatGPT (${cfg.chatgptUrl})`;
+  }
+
+  if (bin === "jobhunt" || name === "chrome" || name === "chromium" || name === "browser") {
+    const urlMatch = app.match(/https?:\/\/\S+/i);
+    return openJobHuntBrowser(cfg, urlMatch?.[0] ?? "https://www.linkedin.com/feed/");
   }
 
   await execFileAsync("bash", ["-lc", `nohup ${bin} >/dev/null 2>&1 &`], {

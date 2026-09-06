@@ -135,6 +135,7 @@ export type JobPlatformCredentialInput = {
   loginUrl?: string;
   email?: string;
   useGoogleSso?: boolean;
+  sessionReady?: boolean;
   notes?: string;
 };
 
@@ -143,8 +144,11 @@ export type JobPlatformCredential = {
   label: string;
   loginUrl: string;
   email: string;
+  /** Toujours false — on ne stocke plus de mots de passe. */
   passwordSet: boolean;
   useGoogleSso: boolean;
+  /** L'utilisateur s'est connecté sur le PC (cookies profil Job Hunt). */
+  sessionReady: boolean;
   notes: string;
   updatedAt: string | null;
 };
@@ -171,6 +175,7 @@ export const EVENT_KIND_LABEL: Record<string, string> = {
   apply_failed: "Échec candidature",
   status_changed: "Statut mis à jour",
   auto_run: "Cycle automatique",
+  login_opened: "Connexion plateforme ouverte",
 };
 
 export const JOB_PLATFORM_DEFS: JobPlatformDef[] = [
@@ -191,7 +196,12 @@ export const JOB_PLATFORM_DEFS: JobPlatformDef[] = [
 export const DEFAULT_PLATFORMS = JOB_PLATFORM_DEFS.map((p) => p.label);
 
 export const JOB_HUNT_MARKER = "[JOB_HUNT]";
+export const JOB_HUNT_LOGIN_MARKER = "[JOB_HUNT_LOGIN]";
 
 export function jobHuntPromptHeader(listingId: string, action: "tailor" | "apply"): string {
   return `${JOB_HUNT_MARKER}\nlisting_id: ${listingId}\naction: ${action}\n`;
+}
+
+export function jobHuntLoginPromptHeader(platform: string, loginUrl: string): string {
+  return `${JOB_HUNT_LOGIN_MARKER}\nplatform: ${platform}\nurl: ${loginUrl}\n`;
 }

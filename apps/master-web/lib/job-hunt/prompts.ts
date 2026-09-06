@@ -1,5 +1,9 @@
 import type { JobHuntListing, JobHuntProfile } from "./types";
-import { credentialHintForUrl, getPlatformCredential, platformSlugFromUrl } from "./credentials";
+import {
+  credentialHintForUrl,
+  jobHuntBrowserProfileHint,
+  platformSlugFromUrl,
+} from "./credentials";
 import { jobHuntPromptHeader } from "./types";
 
 export function buildTailorPrompt(profile: JobHuntProfile, listing: JobHuntListing): string {
@@ -44,31 +48,23 @@ export function buildApplyPrompt(
   const cv = listing.tailoredCv || profile.cvBase;
   const letter = listing.coverLetter || profile.coverLetterTemplate;
   const slug = platformSlugFromUrl(listing.url);
-  const cred = slug ? getPlatformCredential(slug) : null;
-
-  const loginBlock =
-    cred && !cred.useGoogleSso && cred.email && cred.password
-      ? [
-          "## Identifiants plateforme (usage agent uniquement)",
-          `URL login: ${cred.loginUrl}`,
-          `Email: ${cred.email}`,
-          `Mot de passe: ${cred.password}`,
-        ].join("\n")
-      : `Connexion: ${credentialHintForUrl(listing.url)}`;
 
   return [
     jobHuntPromptHeader(listing.id, "apply"),
-    "[CANDIDATURE JOB HUNT — mode navigateur humain]",
+    "[CANDIDATURE JOB HUNT — session navigateur, pas de mots de passe]",
     "",
-    "Objectif: ouvrir l'offre d'emploi, remplir le formulaire de candidature, uploader le CV si demandé.",
+    "Objectif: ouvrir l'offre, remplir le formulaire, uploader le CV si demandé.",
     "NE PAS cliquer sur Envoyer/Submit sans confirmation explicite — pause avant le bouton final.",
     "",
-    "Comptes: l'utilisateur utilise Google Password Manager dans Chrome/Firefox. Si une page de connexion apparaît,",
-    "cliquer sur « Continuer avec Google » ou laisser le gestionnaire remplir — ne jamais demander le mot de passe.",
-    "Si CAPTCHA ou 2FA: mettre le job en pause et décrire ce qui bloque.",
-    "",
-    `Connexion plateforme: ${credentialHintForUrl(listing.url)}`,
-    loginBlock,
+    "## Auth (IMPORTANT)",
+    `- Profil navigateur persistant: ${jobHuntBrowserProfileHint()}`,
+    "- Ouvre Chrome/Chromium via open_app « chrome » (ce profil est utilisé) puis navigue vers l'URL.",
+    "- Les cookies LinkedIn / Indeed / WTTJ doivent déjà être présents si l'utilisateur s'est connecté via Comptes.",
+    "- NE JAMAIS demander, taper ou inventer un mot de passe.",
+    "- Si page de login: pause (ask_user) pour que l'utilisateur se connecte lui-même sur le PC, puis reprendre.",
+    "- Si « Continuer avec Google »: laisser l'utilisateur choisir le compte (ne pas automatiser le SSO).",
+    `- Contexte plateforme: ${credentialHintForUrl(listing.url)}`,
+    slug ? `- Plateforme détectée: ${slug}` : "",
     "",
     `URL offre: ${listing.applyUrl || listing.url}`,
     `Poste: ${listing.title} @ ${listing.company}`,
@@ -84,10 +80,13 @@ export function buildApplyPrompt(
     letter.slice(0, 2000),
     "",
     "Étapes:",
-    "1. Ouvrir l'URL dans le navigateur",
-    "2. Lire la page (vision) et localiser « Postuler » / « Apply »",
-    "3. Remplir tous les champs visibles avec les infos ci-dessus",
-    "4. Capturer un screenshot de la page pré-submit",
-    "5. PAUSE — attendre validation utilisateur avant envoi final",
-  ].join("\n");
+    "1. Ouvrir le navigateur Job Hunt (chrome) puis l'URL",
+    "2. Vérifier que la session est connectée ; sinon ask_user",
+    "3. Localiser « Postuler » / « Apply »",
+    "4. Remplir les champs visibles avec les infos ci-dessus",
+    "5. Capturer un screenshot de la page pré-submit",
+    "6. PAUSE — attendre validation utilisateur avant envoi final",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

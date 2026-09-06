@@ -57,7 +57,7 @@ export function loadAgentConfig(): AgentConfig {
     maxSteps: Number(process.env.PC_AGENT_MAX_STEPS ?? "40"),
     maxMinutes: Number(process.env.PC_AGENT_MAX_MINUTES ?? "25"),
     display: process.env.DISPLAY || ":0",
-    appAllowlist: (process.env.PC_APP_ALLOWLIST || "cursor,gnome-terminal,x-terminal-emulator,firefox,google-chrome,chromium,chromium-browser,nautilus,code")
+    appAllowlist: (process.env.PC_APP_ALLOWLIST || "cursor,gnome-terminal,x-terminal-emulator,firefox,google-chrome,chromium,chromium-browser,chrome,browser,jobhunt,nautilus,code")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
