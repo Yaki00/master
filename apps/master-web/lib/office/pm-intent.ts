@@ -2,9 +2,46 @@
 
 export type PmPlanGateReply = "approve" | "reject" | "revise";
 
+const TRIVIAL_CHAT_RE =
+  /^(salut|bonjour|bonsoir|hey|hi|hello|merci|ok|oui|non|thanks|thx)[\s!.?]*$/i;
+
+const SIMPLE_SENTINEL_RE =
+  /^\s*(surveille|veille|alerte[- ]?moi)\b/i;
+
 /**
- * Détecte un brief de projet complexe nécessitant orchestration d'équipe.
- * Ne matche PAS une simple sentinelle « surveille RTX… » sans signal PM fort.
+ * Demande assez riche pour un projet multi-agents (sans exiger « lance un projet »).
+ * Exclut chat banal et sentinelles one-shot.
+ */
+export function looksLikePmWork(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length < 24) return false;
+  if (TRIVIAL_CHAT_RE.test(t)) return false;
+  if (SIMPLE_SENTINEL_RE.test(t) && t.length < 100 && !/\b([ée]quipe|mission|projet)\b/i.test(t)) {
+    return false;
+  }
+
+  const strongVerb =
+    /\b(mission|d[eé]l[eè]gue|delegue|assigne|redistribue|coordonne|organise|planifie|pilote|orchestre)\b/i.test(
+      t,
+    );
+  const projectSignal =
+    /\b(projet|sous-?t[aâ]ches?|[ée]quipe|équipe|handoff|multi.?agent)\b/i.test(t);
+  const workVerb =
+    /\b(analyse|construis|construire|impl[eé]mente|pr[eé]pare|livre|livrer|d[eé]veloppe|recherche|cadrage|synth[eè]se)\b/i.test(
+      t,
+    );
+  const longActionable =
+    t.length >= 80 &&
+    /\b(fais|fait|cr[eé]e|creer|trouver|mettre|en place|besoin|je veux|j'aimerais|il me faut)\b/i.test(
+      t,
+    );
+
+  return strongVerb || projectSignal || (workVerb && t.length >= 40) || longActionable;
+}
+
+/**
+ * Détecte un brief nécessitant orchestration d'équipe.
+ * Ne matche PAS une simple sentinelle « surveille RTX… » sans signal PM.
  */
 export function parsePmProjectStart(text: string): { title: string; brief: string } | null {
   const t = text.trim();
@@ -21,7 +58,10 @@ export function parsePmProjectStart(text: string): { title: string; brief: strin
     (/\b([ée]quipe)\b/i.test(t) &&
       /\b(lance|projet|mission|organise|pilote|adapte?e?)\b/i.test(t));
 
-  if (!strong) return null;
+  // Réunion all-hands : laisser meeting.ts
+  if (/\br[eé]union\b|\bmeeting\b|\ball[- ]?hands\b|\btout\s+le\s+monde\b/i.test(t)) {
+    return null;
+  }
 
   // Sentinelle CRUD simple sans équipe / mission PM : laisser parseProjectSpeech
   if (
@@ -32,6 +72,17 @@ export function parsePmProjectStart(text: string): { title: string; brief: strin
     return null;
   }
 
+  // CRUD projet simple (« crée un projet X ») sans signal d’orchestration
+  if (
+    /\b(cr[eé]e|créer|creer|ajoute|supprime|mets?\s+[àa]\s+jour)\b[\s\S]{0,40}\bprojet\b/i.test(t) &&
+    !strong &&
+    !/\b(mission|d[eé]l[eè]gue|organise|pilote|[ée]quipe|adapte?e?)\b/i.test(t)
+  ) {
+    return null;
+  }
+
+  if (!strong && !looksLikePmWork(t)) return null;
+
   const quoted =
     t.match(/[«"]([^»"]{2,80})[»"]/)?.[1]?.trim() ||
     t.match(/\bprojet\s+(?:nomm[eé]|appel[eé]|:\s*)([^.!?\n]{2,80})/i)?.[1]?.trim();
@@ -40,6 +91,7 @@ export function parsePmProjectStart(text: string): { title: string; brief: strin
     quoted ||
     t.match(/\blance\s+un\s+projet\s+([^.!?\n,]{3,80})/i)?.[1]?.trim() ||
     t.match(/\bpilote\s+le\s+projet\s+([^.!?\n,]{3,80})/i)?.[1]?.trim() ||
+    t.match(/\bmission\s+[:\-]?\s*([^.!?\n,]{3,80})/i)?.[1]?.trim() ||
     "";
 
   if (title) {

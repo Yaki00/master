@@ -113,6 +113,14 @@ export function OfficeConsole({
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [rosterWidth, setRosterWidth] = useState(DEFAULT_ROSTER_WIDTH);
   const [rosterDragging, setRosterDragging] = useState(false);
+  const [archives, setArchives] = useState<
+    { id: string; title: string; messageCount: number; archivedAt: string | null }[]
+  >([]);
+  const [archiveView, setArchiveView] = useState<{
+    id: string;
+    title: string;
+    events: OfficeEvent[];
+  } | null>(null);
   const listRef = useRef<HTMLOListElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const rosterDragRef = useRef<{ startX: number; startW: number } | null>(null);
@@ -126,14 +134,39 @@ export function OfficeConsole({
   const agent = agents.find((a) => a.id === focusId) ?? null;
 
   const botBubbles = useMemo(
-    () => eventsToBubbles(events, pendingCommands).slice(-40),
-    [events, pendingCommands],
+    () =>
+      archiveView
+        ? eventsToBubbles(archiveView.events, []).slice(-80)
+        : eventsToBubbles(events, pendingCommands).slice(-40),
+    [archiveView, events, pendingCommands],
   );
   const globalBubbles = useMemo(
     () => feedToBubbles(globalEvents ?? events, agents, 50),
     [globalEvents, events, agents],
   );
   const bubbles = view === "global" ? globalBubbles : botBubbles;
+
+  const loadArchives = useCallback(async (agentId: string) => {
+    try {
+      const res = await fetch(
+        `/api/office/agents/${encodeURIComponent(agentId)}/conversations?status=archived&limit=30`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) return;
+      const body = (await res.json()) as {
+        conversations?: { id: string; title: string; messageCount: number; archivedAt: string | null }[];
+      };
+      setArchives(body.conversations ?? []);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    setArchiveView(null);
+    if (focusId) void loadArchives(focusId);
+    else setArchives([]);
+  }, [focusId, loadArchives]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -248,7 +281,7 @@ export function OfficeConsole({
   const mentionChips = mentionSuggestions.length > 0 ? mentionSuggestions : QUICK_MENTIONS;
   const sendText = draft.trim();
   const canMessage = Boolean(
-    onAction && agent && messageAction && !messageAction.disabledReason && !busy && sendText,
+    onAction && agent && messageAction && !messageAction.disabledReason && !busy && sendText && !archiveView,
   );
 
   function applyMentionToken(token: string) {
@@ -273,13 +306,43 @@ export function OfficeConsole({
   }
 
   async function clearChat() {
-    if (!onAction || !focusId || busy) return;
+    if (!onAction || !focusId || busy || archiveView) return;
     if (!confirmClear) {
       setConfirmClear(true);
       return;
     }
     setConfirmClear(false);
-    await onAction("clear", undefined, focusId);
+    const ok = await onAction("clear", undefined, focusId);
+    if (ok) {
+      setArchiveView(null);
+      await loadArchives(focusId);
+    }
+  }
+
+  async function openArchive(conversationId: string) {
+    if (!focusId || !conversationId) {
+      setArchiveView(null);
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/api/office/agents/${encodeURIComponent(focusId)}/conversations/${encodeURIComponent(conversationId)}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) return;
+      const body = (await res.json()) as {
+        conversation?: { id: string; title: string; events: OfficeEvent[] };
+      };
+      if (!body.conversation) return;
+      setArchiveView({
+        id: body.conversation.id,
+        title: body.conversation.title,
+        events: body.conversation.events,
+      });
+      setView("bot");
+    } catch {
+      /* ignore */
+    }
   }
 
   async function runSide(kind: OfficeCommandKind, needsConfirm?: boolean) {
@@ -480,14 +543,45 @@ export function OfficeConsole({
                 PC
               </span>
               {view === "bot" && focusId && (
-                <button
-                  type="button"
-                  className={`pixel-console-seg pixel-console-seg-btn ${confirmClear ? "is-armed" : ""}`}
-                  disabled={busy}
-                  onClick={() => void clearChat()}
-                >
-                  {confirmClear ? "Confirmer ?" : "Nouvelle demande"}
-                </button>
+                <>
+                  {archives.length > 0 ? (
+                    <label className="pixel-console-archive">
+                      <span className="pixel-sr-only">Discussions archivées</span>
+                      <select
+                        className="pixel-console-seg pixel-console-seg-select"
+                        value={archiveView?.id ?? ""}
+                        disabled={busy}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (!v) setArchiveView(null);
+                          else void openArchive(v);
+                        }}
+                        title="Discussions archivées"
+                      >
+                        <option value="">Fil actuel</option>
+                        {archives.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.title.slice(0, 42)}
+                            {c.messageCount ? ` (${c.messageCount})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={`pixel-console-seg pixel-console-seg-btn ${confirmClear ? "is-armed" : ""}`}
+                    disabled={busy || Boolean(archiveView)}
+                    title={
+                      archiveView
+                        ? "Revenez au fil actuel pour ouvrir une nouvelle discussion"
+                        : "Archive le fil et ouvre une discussion vide"
+                    }
+                    onClick={() => void clearChat()}
+                  >
+                    {confirmClear ? "Confirmer ?" : "Nouvelle discussion"}
+                  </button>
+                </>
               )}
             </div>
             {view === "bot" &&
@@ -518,6 +612,14 @@ export function OfficeConsole({
         <div
           className={`pixel-console-feed-wrap ${feedLoading && view === "global" ? "is-feed-loading" : ""}${showScrollDown ? " has-scroll-hint" : ""}`}
         >
+          {archiveView && view === "bot" ? (
+            <div className="pixel-console-archive-banner" role="status">
+              Archive · {archiveView.title}
+              <button type="button" className="pixel-btn ghost compact" onClick={() => setArchiveView(null)}>
+                Fil actuel
+              </button>
+            </div>
+          ) : null}
           <div className="pixel-sr-live" aria-live="assertive" aria-atomic="true">
             {pendingAnnouncement}
           </div>

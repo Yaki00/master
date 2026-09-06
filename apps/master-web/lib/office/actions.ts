@@ -42,6 +42,8 @@ import {
   parsePmProjectStart,
   parsePmStatusQuery,
 } from "@/lib/office/pm-intent";
+import { parseOutreachListIntent } from "@/lib/office/outreach-intent";
+import { scaffoldOutreachProject } from "@/lib/office/project-workspace";
 import {
   answerBlockedQuestion,
   approveDeliveryGate,
@@ -93,6 +95,7 @@ export type OfficeActionResult = {
   agent: OfficeAgent | null;
   commandId?: string;
   jobId?: string;
+  projectId?: string;
   error?: string;
 };
 
@@ -160,6 +163,37 @@ export async function dispatchOfficeAction(
           return { ok: true, agent: getAggregatedOfficeAgent(agentId) ?? agent };
         }
       }
+    }
+
+    // Réunion all-hands AVANT PM (évite qu’un brief « réunion… » parte en projet)
+    if (kind === "message" && message && parseMeetingIntent(message)) {
+      const task = startAllHandsMeeting({
+        brief: message,
+        facilitatorAgentId: agentId,
+      });
+      const n = Array.isArray(task.meta.participants) ? (task.meta.participants as unknown[]).length : 0;
+      appendOfficeEvent(agentId, "user_message", { text: message, role: "user" });
+      appendOfficeEvent(agentId, "agent_message", {
+        text: `Réunion lancée — j’interroge ${n} agents (Chef, Mgr Dev, Mgr Lab, Main). Je reviens avec la synthèse quand tout le monde a répondu.`,
+        role: "agent",
+        meeting: true,
+        taskId: task.id,
+      });
+      appendAgentLog(agentId, "reflection", `Réunion lancée · ${n} agents consultés · tâche ${task.id.slice(0, 8)}`, {
+        taskId: task.id,
+        meeting: true,
+      });
+      upsertOfficeAgent({
+        id: agentId,
+        kind: "openclaw",
+        name: agent?.name ?? parsed.rest,
+        status: "working",
+        task: task.title.slice(0, 80),
+        currentAction: "réunion",
+        lastSeenAt: new Date().toISOString(),
+        meta: { ...(agent?.meta ?? {}), meetingTaskId: task.id, pendingCommand: "meeting" },
+      });
+      return { ok: true, agent: getAggregatedOfficeAgent(agentId) ?? agent };
     }
 
     // --- Orchestration PM (déterministe) ---
@@ -235,6 +269,31 @@ export async function dispatchOfficeAction(
         return { ok: true, agent: getAggregatedOfficeAgent(agentId) ?? agent };
       }
 
+      // Outreach commerces sans site → workspace CSV + mail + plan PM
+      const outreach = parseOutreachListIntent(message);
+      if (outreach) {
+        const built = scaffoldOutreachProject(outreach, agentId);
+        upsertOfficeAgent({
+          id: agentId,
+          kind: "openclaw",
+          name: agent?.name ?? parsed.rest,
+          status: "waiting",
+          task: `Plan · ${outreach.title}`.slice(0, 80),
+          currentAction: "attente validation plan",
+          lastSeenAt: new Date().toISOString(),
+          meta: {
+            ...(agent?.meta ?? {}),
+            pmProjectId: built.projectId,
+            pendingCommand: "pm-plan",
+          },
+        });
+        return {
+          ok: true,
+          agent: getAggregatedOfficeAgent(agentId) ?? agent,
+          projectId: built.projectId,
+        };
+      }
+
       const pmStart = parsePmProjectStart(message);
       if (pmStart) {
         const started = startPmProject({
@@ -258,37 +317,6 @@ export async function dispatchOfficeAction(
         });
         return { ok: true, agent: getAggregatedOfficeAgent(agentId) ?? agent };
       }
-    }
-
-    // Réunion all-hands — ping réel de chaque agent (AVANT projet/veille/LLM)
-    if (kind === "message" && parseMeetingIntent(message)) {
-      const task = startAllHandsMeeting({
-        brief: message,
-        facilitatorAgentId: agentId,
-      });
-      const n = Array.isArray(task.meta.participants) ? (task.meta.participants as unknown[]).length : 0;
-      appendOfficeEvent(agentId, "user_message", { text: message, role: "user" });
-      appendOfficeEvent(agentId, "agent_message", {
-        text: `Réunion lancée — j’interroge ${n} agents (Chef, Mgr Dev, Mgr Lab, Main). Je reviens avec la synthèse quand tout le monde a répondu.`,
-        role: "agent",
-        meeting: true,
-        taskId: task.id,
-      });
-      appendAgentLog(agentId, "reflection", `Réunion lancée · ${n} agents consultés · tâche ${task.id.slice(0, 8)}`, {
-        taskId: task.id,
-        meeting: true,
-      });
-      upsertOfficeAgent({
-        id: agentId,
-        kind: "openclaw",
-        name: agent?.name ?? parsed.rest,
-        status: "working",
-        task: task.title.slice(0, 80),
-        currentAction: "réunion",
-        lastSeenAt: new Date().toISOString(),
-        meta: { ...(agent?.meta ?? {}), meetingTaskId: task.id, pendingCommand: "meeting" },
-      });
-      return { ok: true, agent: getAggregatedOfficeAgent(agentId) ?? agent };
     }
 
     // CRUD projet via langage naturel (avant veille / mission / LLM)

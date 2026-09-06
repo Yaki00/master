@@ -9,6 +9,7 @@ import { useMetricsContext } from "@/components/MetricsProvider";
 const NAV = [
   { href: "/", label: "Home", icon: "◈" },
   { href: "/agents", label: "Agents", icon: "♟" },
+  { href: "/projets", label: "Projets", icon: "▤" },
   { href: "/vps", label: "VPS", icon: "⬡" },
   { href: "/apps", label: "Applications", icon: "◫" },
   { href: "/n8n", label: "n8n", icon: "⚡" },

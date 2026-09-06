@@ -20,6 +20,11 @@ import { filterSummaryForStorage } from "../office/summary-keep";
 import { appendAgentLog } from "./agent-logs";
 import { getDb } from "./sqlite";
 import {
+  archiveOfficeConversationFromEvents,
+  closeActiveConversations,
+  ensureActiveConversation,
+} from "./office-conversations";
+import {
   getJob,
   listJobEvents,
   listJobs,
@@ -220,17 +225,24 @@ export function listOfficeFeed(limit = 80): OfficeEvent[] {
     });
 }
 
-/** Efface le fil chat (« nouvelle demande ») — garde le résumé seulement s’il est utile. */
+/**
+ * Nouvelle discussion : archive le fil courant (si contenu utile), puis vide les events live.
+ * Conserves un résumé court seulement s’il est utile (filterSummaryForStorage).
+ */
 export function clearOfficeEvents(agentId: string): number {
   const database = getDb();
-  const info = database.prepare(`DELETE FROM office_events WHERE agent_id = ?`).run(agentId);
+  const priorEvents = listOfficeEvents(agentId, 500).slice().reverse(); // chronologique
   const agent = getStoredOfficeAgent(agentId);
   let keptSummary = false;
   let dropReason = "";
+  let archivedId: string | null = null;
+  let summaryForArchive = "";
+
   if (agent) {
     const meta = { ...agent.meta };
     const prev = typeof meta.chatSummary === "string" ? String(meta.chatSummary) : "";
     const { summary, decision } = filterSummaryForStorage(prev);
+    summaryForArchive = summary || prev.slice(0, 800);
     if (summary) {
       meta.chatSummary = summary;
       meta.chatSummaryAt = new Date().toISOString();
@@ -250,6 +262,25 @@ export function clearOfficeEvents(agentId: string): number {
         });
       }
     }
+
+    const archived = archiveOfficeConversationFromEvents(agentId, priorEvents, {
+      summary: summaryForArchive,
+    });
+    if (archived) {
+      archivedId = archived.id;
+      appendAgentLog(agentId, "reflection", `Discussion archivée · ${archived.title.slice(0, 80)}`, {
+        conversationId: archived.id,
+        messageCount: archived.messageCount,
+      });
+    }
+
+    closeActiveConversations(agentId);
+    const active = ensureActiveConversation(agentId);
+    meta.activeConversationId = active.id;
+    if (archivedId) {
+      meta.lastArchivedConversationId = archivedId;
+    }
+
     upsertOfficeAgent({
       id: agent.id,
       kind: agent.kind,
@@ -260,16 +291,28 @@ export function clearOfficeEvents(agentId: string): number {
       lastSeenAt: agent.lastSeenAt ?? new Date().toISOString(),
       meta,
     });
+  } else {
+    archiveOfficeConversationFromEvents(agentId, priorEvents, { summary: "" });
+    closeActiveConversations(agentId);
+    ensureActiveConversation(agentId);
   }
+
+  const info = database.prepare(`DELETE FROM office_events WHERE agent_id = ?`).run(agentId);
+
+  const archiveNote = archivedId
+    ? ` Discussion précédente archivée (${archivedId.slice(0, 8)}).`
+    : "";
   appendOfficeEvent(agentId, "agent_message", {
     text: keptSummary
-      ? "Nouvelle demande — fil vidé, résumé utile conservé."
+      ? `Nouvelle discussion — fil vidé, résumé utile conservé.${archiveNote}`
       : dropReason
-        ? `Nouvelle demande — fil vidé (résumé écarté: ${dropReason}).`
-        : "Nouvelle demande — fil vidé.",
+        ? `Nouvelle discussion — fil vidé (résumé écarté: ${dropReason}).${archiveNote}`
+        : `Nouvelle discussion ouverte.${archiveNote}`,
     role: "system",
     cleared: true,
     newRequest: true,
+    newDiscussion: true,
+    archivedConversationId: archivedId,
   });
   return info.changes;
 }

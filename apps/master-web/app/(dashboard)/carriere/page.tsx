@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { DetailDrawer } from "@/components/ui/DetailDrawer";
+import { htmlToPlainText, looksLikeHtml } from "@/lib/job-hunt/html-text";
 import {
   DEFAULT_PLATFORMS,
   EVENT_KIND_LABEL,
@@ -594,14 +595,27 @@ export default function CarrierePage() {
                 <div><dt className="text-zinc-500">Postulé le</dt><dd className="text-white">{selected.appliedAt ? formatTime(selected.appliedAt) : "—"}</dd></div>
               </dl>
               {selected.tags.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1">{selected.tags.map((t) => <span key={t} className="rounded bg-surface px-2 py-0.5 text-[10px] text-zinc-400">{t}</span>)}</div>
+                <div className="mt-3 flex flex-wrap gap-1">
+                  {selected.tags.slice(0, 24).map((t) => (
+                    <span key={t} className="rounded bg-surface px-2 py-0.5 text-[10px] text-zinc-400">
+                      {t}
+                    </span>
+                  ))}
+                  {selected.tags.length > 24 ? (
+                    <span className="text-[10px] text-zinc-500">+{selected.tags.length - 24}</span>
+                  ) : null}
+                </div>
               )}
             </Card>
 
             {selected.description && (
               <Card padding="sm">
                 <h4 className="mb-2 text-xs font-medium uppercase text-zinc-500">Description</h4>
-                <p className="whitespace-pre-wrap text-xs text-zinc-400">{selected.description}</p>
+                <p className="whitespace-pre-wrap text-xs text-zinc-400">
+                  {looksLikeHtml(selected.description)
+                    ? htmlToPlainText(selected.description)
+                    : selected.description}
+                </p>
               </Card>
             )}
 

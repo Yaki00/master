@@ -2,8 +2,8 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 
-export const DEFAULT_OFFICE_MODEL = "ollama-mac/qwen2.5-32b-64k:latest";
-export const DEFAULT_FAST_MODEL = "qwen2.5-7b-64k:latest";
+export const DEFAULT_OFFICE_MODEL = "ollama-router/auto";
+export const DEFAULT_FAST_MODEL = "qwen3:8b";
 export const DEFAULT_OFFICE_AGENT = "office";
 
 /** Messages qui forcent OpenClaw (spawn / tools), pas le chat Ollama direct. */

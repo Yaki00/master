@@ -405,6 +405,39 @@ function migrateOfficeSchema(database: Database.Database) {
       updated_at TEXT NOT NULL
     );
   `);
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS office_conversations (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      events_json TEXT NOT NULL DEFAULT '[]',
+      message_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      archived_at TEXT,
+      meta TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS idx_office_conversations_agent
+      ON office_conversations(agent_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_office_conversations_archived
+      ON office_conversations(agent_id, archived_at DESC);
+  `);
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS office_project_files (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      mime TEXT NOT NULL DEFAULT 'text/plain',
+      size INTEGER NOT NULL DEFAULT 0,
+      content TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(project_id, path)
+    );
+    CREATE INDEX IF NOT EXISTS idx_office_project_files_project
+      ON office_project_files(project_id, path);
+  `);
 }
 
 function rowToNotification(row: Record<string, unknown>): NotificationRecord {

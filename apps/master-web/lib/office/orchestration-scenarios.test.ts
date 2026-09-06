@@ -311,6 +311,15 @@ describe("OS-06 — plan → gate humain → équipe + sous-tâches", () => {
   });
   afterEach(() => closeDb());
 
+  it("dispatch mission longue → PM sans formule « lance un projet »", async () => {
+    const start = await dispatchOfficeAction("openclaw:office", "message", {
+      text: "Délègue une mission : analyser le marché GPU eBay et proposer un plan d'équipe adapté",
+    });
+    expect(start.ok).toBe(true);
+    const hit = listAiProjects().find((p) => getOrchestration(p)?.phase === "awaiting_plan_approval");
+    expect(hit).toBeTruthy();
+  });
+
   it("dispatch start + ok go materialise équipe et parentTaskId", async () => {
     const start = await dispatchOfficeAction("openclaw:office", "message", {
       text: "Lance un projet surveillance prix eBay avec une équipe adaptée",
@@ -383,7 +392,7 @@ describe("OS-08 — rollup statut factuel", () => {
       research.commandId!,
       research.assigneeAgentId!,
       "done",
-      "research fait",
+      "Livrable research: sources eBay listées, contraintes prix et catégories détaillées.",
       research.id,
     );
 

@@ -8,9 +8,11 @@ import { getAgentTeam } from "@/lib/db/agent-teams";
 import { claimOfficeCommands, getOfficeCommand } from "@/lib/db/office";
 import { getOfficeTask, listOfficeTasksByParent } from "@/lib/db/office-tasks";
 import {
+  SUBTASK_NUDGE_MS,
   SUBTASK_TIMEOUT_MS,
   answerBlockedQuestion,
   approvePlan,
+  assessSubtaskDelivery,
   blockSubtaskWithQuestion,
   buildPmStatusReply,
   cancelPmProject,
@@ -30,6 +32,9 @@ function ack(commandId: string, agentId: string, text: string, taskId: string) {
     .run(text, new Date().toISOString(), commandId);
   return processPmAfterCommand(commandId, agentId, "done", text, taskId);
 }
+
+const SOLID = (label: string) =>
+  `Livrable ${label}: analyse détaillée, contraintes listées, prochaines étapes claires et actionnables.`;
 
 describe("project-orchestrator", () => {
   beforeEach(() => {
@@ -90,11 +95,11 @@ describe("project-orchestrator", () => {
     const review = children.find((c) => c.meta.planSubtaskId === "review")!;
     expect(review.status).toBe("queued");
 
-    ack(research.commandId!, research.assigneeAgentId!, "research ok", research.id);
+    ack(research.commandId!, research.assigneeAgentId!, SOLID("research"), research.id);
     children = listOfficeTasksByParent(rootTask.id);
     expect(children.find((c) => c.id === review.id)?.status).toBe("queued");
 
-    ack(build.commandId!, build.assigneeAgentId!, "build ok", build.id);
+    ack(build.commandId!, build.assigneeAgentId!, SOLID("build"), build.id);
     children = listOfficeTasksByParent(rootTask.id);
     expect(children.find((c) => c.id === review.id)?.status).toBe("working");
   });
@@ -139,13 +144,13 @@ describe("project-orchestrator", () => {
     approvePlan(project.id);
     const children = listOfficeTasksByParent(rootTask.id);
     for (const c of children.filter((x) => x.status === "working")) {
-      ack(c.commandId!, c.assigneeAgentId!, `ok ${c.meta.planSubtaskId}`, c.id);
+      ack(c.commandId!, c.assigneeAgentId!, SOLID(String(c.meta.planSubtaskId)), c.id);
     }
     // review now working
     const review = listOfficeTasksByParent(rootTask.id).find(
       (c) => c.meta.planSubtaskId === "review",
     )!;
-    ack(review.commandId!, review.assigneeAgentId!, "synthèse ok", review.id);
+    ack(review.commandId!, review.assigneeAgentId!, SOLID("review synthèse"), review.id);
 
     const orch = getOrchestration(getAiProject(project.id)!)!;
     expect(orch.phase).toBe("awaiting_delivery_approval");
@@ -188,12 +193,12 @@ describe("project-orchestrator", () => {
     const research = listOfficeTasksByParent(rootTask.id).find(
       (c) => c.meta.planSubtaskId === "research",
     )!;
-    ack(research.commandId!, research.assigneeAgentId!, "once", research.id);
+    ack(research.commandId!, research.assigneeAgentId!, SOLID("idempotence"), research.id);
     const again = processPmAfterCommand(
       research.commandId!,
       research.assigneeAgentId!,
       "done",
-      "once",
+      SOLID("idempotence"),
       research.id,
     );
     expect(again).toBeTruthy();
@@ -221,6 +226,56 @@ describe("project-orchestrator", () => {
     expect(getOrchestration(getAiProject(project.id)!)?.phase).toBe("awaiting_human");
   });
 
+  it("nudge avant escalade", () => {
+    const { project, rootTask } = startPmProject({
+      brief: "x",
+      title: "Nudge",
+      facilitatorAgentId: "openclaw:office",
+    });
+    approvePlan(project.id);
+    const research = listOfficeTasksByParent(rootTask.id).find(
+      (c) => c.meta.planSubtaskId === "research",
+    )!;
+    const oldCmd = research.commandId!;
+    const old = new Date(Date.now() - SUBTASK_NUDGE_MS - 1000).toISOString();
+    getDb()
+      .prepare(`UPDATE office_tasks SET updated_at = ? WHERE id = ?`)
+      .run(old, research.id);
+
+    const n = processPmTimeouts(Date.now());
+    expect(n).toBeGreaterThanOrEqual(1);
+    const after = getOfficeTask(research.id)!;
+    expect(after.meta.nudgeCount).toBe(1);
+    expect(after.status).toBe("working");
+    expect(after.commandId).not.toBe(oldCmd);
+    expect(getOrchestration(getAiProject(project.id)!)?.phase).toBe("executing");
+  });
+
+  it("refuse livrable trop court puis retry", () => {
+    expect(assessSubtaskDelivery("ok").ok).toBe(false);
+    expect(assessSubtaskDelivery(SOLID("research")).ok).toBe(true);
+
+    const { project, rootTask } = startPmProject({
+      brief: "x",
+      title: "Soft",
+      facilitatorAgentId: "openclaw:office",
+    });
+    approvePlan(project.id);
+    const research = listOfficeTasksByParent(rootTask.id).find(
+      (c) => c.meta.planSubtaskId === "research",
+    )!;
+    processPmAfterCommand(
+      research.commandId!,
+      research.assigneeAgentId!,
+      "done",
+      "ok",
+      research.id,
+    );
+    const after = getOfficeTask(research.id)!;
+    expect(after.status).toBe("working");
+    expect(Number(after.meta.retryCount)).toBe(1);
+  });
+
   it("revise garde awaiting_plan_approval", () => {
     const { project } = startPmProject({
       brief: "x",
@@ -230,6 +285,29 @@ describe("project-orchestrator", () => {
     revisePlan(project.id, "ajoute mgr-lab pour veille");
     expect(getOrchestration(getAiProject(project.id)!)?.phase).toBe("awaiting_plan_approval");
     expect(getOrchestration(getAiProject(project.id)!)?.revisionNotes.length).toBe(1);
+  });
+
+  it("revise livraison requeue review", () => {
+    const { project, rootTask } = startPmProject({
+      brief: "x",
+      title: "RevLiv",
+      facilitatorAgentId: "openclaw:office",
+    });
+    approvePlan(project.id);
+    const children = listOfficeTasksByParent(rootTask.id);
+    for (const c of children.filter((x) => x.status === "working")) {
+      ack(c.commandId!, c.assigneeAgentId!, SOLID(String(c.meta.planSubtaskId)), c.id);
+    }
+    const review = listOfficeTasksByParent(rootTask.id).find(
+      (c) => c.meta.planSubtaskId === "review",
+    )!;
+    ack(review.commandId!, review.assigneeAgentId!, SOLID("review synthèse"), review.id);
+    expect(getOrchestration(getAiProject(project.id)!)?.phase).toBe("awaiting_delivery_approval");
+
+    const r = answerBlockedQuestion(project.id, "révision ajoute plus de détails prix");
+    expect(r.ok).toBe(true);
+    expect(getOrchestration(getAiProject(project.id)!)?.phase).toBe("executing");
+    expect(getOfficeTask(review.id)?.status).toBe("working");
   });
 
   it("tick idempotent sans double enqueue", () => {

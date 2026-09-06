@@ -1,3 +1,5 @@
+import { scoreListing } from "./score";
+import { htmlToPlainText, looksLikeHtml } from "./html-text";
 import type { JobHuntProfile } from "./types";
 import { findListingByUrl, importJobHuntListing } from "../db/job-hunt";
 import {
@@ -5,7 +7,6 @@ import {
   createSearchRun,
   finalizeSearchRun,
 } from "../db/job-hunt-search-history";
-import { scoreListing } from "./score";
 
 export type SearchListingDraft = {
   title: string;
@@ -24,6 +25,20 @@ export type SearchListingDraft = {
   tags: string[];
   meta?: Record<string, unknown>;
 };
+
+function normalizeDescription(raw: string): string {
+  const text = String(raw ?? "");
+  return looksLikeHtml(text) ? htmlToPlainText(text) : text.trim();
+}
+
+function isMarketplaceSpam(draft: SearchListingDraft): boolean {
+  const blob = `${draft.company} ${draft.title} ${draft.description}`;
+  if (/\blemon\.io\b/i.test(blob)) return true;
+  if (draft.tags.length >= 25 && /not your tech stack|multiple .+ openings/i.test(draft.description)) {
+    return true;
+  }
+  return false;
+}
 
 const DEV_KEYWORDS =
   /developer|engineer|devops|frontend|backend|full.?stack|software|programmer|react|node|typescript|python|développeur/i;
@@ -116,7 +131,7 @@ export async function fetchRemoteOkJobs(): Promise<SearchListingDraft[]> {
       url,
       applyUrl: url,
       source: "remoteok",
-      description: String(job.description ?? "").slice(0, 12000),
+      description: normalizeDescription(String(job.description ?? "")).slice(0, 12000),
       location: String(job.location ?? "Remote"),
       salary,
       employmentType: "full-time",
@@ -152,7 +167,7 @@ export async function fetchRemotiveJobs(): Promise<SearchListingDraft[]> {
       url,
       applyUrl: url,
       source: "remotive",
-      description: String(job.description ?? "").slice(0, 12000),
+      description: normalizeDescription(String(job.description ?? "")).slice(0, 12000),
       location: String(job.candidate_required_location ?? "Worldwide"),
       salary: String(job.salary ?? ""),
       employmentType: String(job.job_type ?? "full_time"),
@@ -172,6 +187,11 @@ function evaluateDraft(
   minScore: number,
 ): { imported: boolean; title?: string } {
   const text = [draft.title, draft.description, ...draft.tags].join(" ");
+
+  if (isMarketplaceSpam(draft)) {
+    logDecision(runId, draft, "skipped", "Écartée — marketplace / annonce fourre-tout (Lemon.io…)", null);
+    return { imported: false };
+  }
 
   if (!isDevJob(text)) {
     logDecision(runId, draft, "skipped", "Écartée — pas une offre développement", null);

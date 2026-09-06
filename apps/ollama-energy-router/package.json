@@ -1,0 +1,11 @@
+{
+  "name": "ollama-energy-router",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local energy-aware LLM router for OpenClaw / Ollama",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  }
+}

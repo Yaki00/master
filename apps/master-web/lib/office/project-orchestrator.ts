@@ -13,13 +13,13 @@ import { createAgentTeam, getAgentTeam } from "@/lib/db/agent-teams";
 import {
   appendOfficeEvent,
   cancelQueuedOfficeCommands,
+  completeOfficeCommand,
   enqueueOfficeCommand,
   getOfficeCommand,
 } from "@/lib/db/office";
 import {
   createOfficeTask,
   getOfficeTask,
-  listOfficeTasks,
   listOfficeTasksByParent,
   updateOfficeTask,
   type OfficeTask,
@@ -29,6 +29,92 @@ import {
   formatPlanSummaryForHuman,
   type ProjectPlan,
 } from "@/lib/office/project-plan";
+import { startAllHandsMeeting } from "@/lib/office/meeting";
+import { OFFICE_CLAIM_STALE_MS } from "@/lib/office/types";
+
+/** Résultat trop faible pour clôturer une sous-tâche (P1 critères). */
+export type SubtaskAssessment =
+  | { ok: true }
+  | { ok: false; reason: string; needsHuman?: boolean; question?: string };
+
+/**
+ * Si l’agent pose une vraie question / demande une info → HITL, pas « done ».
+ */
+export function extractAgentQuestion(resultText: string): string | null {
+  const a = resultText.trim();
+  if (!a || !/\?/.test(a)) return null;
+
+  const askSignals =
+    /\b(peux[- ]tu|pouvez[- ]vous|quelle?|quels?|combien|confirme|pr[eé]cise|dis[- ]moi|indique|as[- ]tu|faut[- ]il|dois[- ]je|besoin (de )?(savoir|ton|votre|d['']une?|d['']un)|avant de (continuer|avancer|livrer)|clarifie|merci de (me )?(dire|pr[eé]ciser))\b/i;
+
+  const looksLikeDelivery =
+    /\b(livrable|voici (le|la|mon)|r[eé]sultat|synth[eè]se|conclusion|j['']ai (termin[eé]|fini|livr[eé])|rapport final)\b/i.test(
+      a,
+    );
+
+  if (looksLikeDelivery && a.length > 200) return null;
+  if (!askSignals.test(a) && !(a.length < 320 && (a.match(/\?/g) ?? []).length >= 1 && !looksLikeDelivery)) {
+    return null;
+  }
+
+  const chunks = a
+    .split(/(?<=[?？])/)
+    .map((s) => s.trim())
+    .filter((s) => /[?？]$/.test(s));
+  const q = (chunks.at(-1) || a).replace(/\s+/g, " ").slice(0, 400);
+  return q.length >= 12 ? q : a.slice(0, 400);
+}
+
+export function assessSubtaskDelivery(
+  resultText: string,
+  acceptance?: string,
+): SubtaskAssessment {
+  const a = resultText.trim();
+  const question = extractAgentQuestion(a);
+  if (question) {
+    return {
+      ok: false,
+      needsHuman: true,
+      question,
+      reason: "L’agent demande une information pour continuer",
+    };
+  }
+  if (!a || a.length < 24) {
+    return { ok: false, reason: "Livrable trop court ou vide" };
+  }
+  if (
+    /^(ok|oui|fait|done|n\/?a|aucune|rien|idk)[\s!.]*$/i.test(a) ||
+    (a.length < 40 && /^(ok|oui|fait|done)\b/i.test(a))
+  ) {
+    return { ok: false, reason: "Livrable non substantiel" };
+  }
+  if (
+    /LLM request failed|assistant turn failed|model idle timeout|timeoutPhase|"status"\s*:\s*"timeout"|Command failed:\s*openclaw|Pas de r[eé]ponse|n['']a pas pu r[eé]pondre/i.test(
+      a,
+    )
+  ) {
+    return { ok: false, reason: "Échec technique / timeout dans la réponse" };
+  }
+  if (
+    /\b(je ne (peux|sais) pas|impossible pour moi|besoin (de )?(plus|davantage) d['']info)\b/i.test(a) &&
+    a.length < 120
+  ) {
+    return { ok: false, reason: "Agent bloqué sans livrable", needsHuman: true, question: a.slice(0, 400) };
+  }
+  const acc = (acceptance ?? "").trim();
+  if (acc.length > 12) {
+    const tokens = acc
+      .toLowerCase()
+      .split(/[^a-z0-9àâäéèêëïîôùûüç]+/i)
+      .filter((w) => w.length >= 5)
+      .slice(0, 6);
+    const hit = tokens.filter((w) => a.toLowerCase().includes(w)).length;
+    if (tokens.length >= 2 && hit === 0 && a.length < 80) {
+      return { ok: false, reason: "Réponse hors critères d’acceptation" };
+    }
+  }
+  return { ok: true };
+}
 
 export type OrchestrationPhase =
   | "planning"
@@ -63,6 +149,8 @@ export type OrchestrationState = {
   processedCommands: string[];
   delivered: boolean;
   revisionNotes: string[];
+  /** Meeting auto déjà lancée pour un blocage (évite spam). */
+  blockerMeetingStarted?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -80,7 +168,11 @@ export type ProjectRollup = {
   rootTaskId: string | null;
 };
 
-export const SUBTASK_TIMEOUT_MS = 30 * 60_000;
+export const SUBTASK_NUDGE_MS = 5 * 60_000;
+/** Escalade humain après nudges / délai (était 30 min — trop long). */
+export const SUBTASK_TIMEOUT_MS = 15 * 60_000;
+export const SUBTASK_MAX_RETRIES = 2;
+export const SUBTASK_MAX_NUDGES = 2;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -99,6 +191,7 @@ export function getOrchestration(project: AiProject): OrchestrationState | null 
     planDraft: o.planDraft ?? null,
     pendingGate: o.pendingGate ?? null,
     blockedQuestion: o.blockedQuestion ?? null,
+    blockerMeetingStarted: o.blockerMeetingStarted === true,
   };
 }
 
@@ -265,6 +358,7 @@ export function startPmProject(opts: {
     processedCommands: [],
     delivered: false,
     revisionNotes: [],
+    blockerMeetingStarted: false,
     createdAt,
     updatedAt: createdAt,
   };
@@ -357,16 +451,47 @@ function depsSatisfied(task: OfficeTask, children: OfficeTask[]): boolean {
   return true;
 }
 
-function enqueueSubtaskWork(task: OfficeTask, project: AiProject, plan: ProjectPlan): OfficeTask {
+function enqueueSubtaskWork(
+  task: OfficeTask,
+  project: AiProject,
+  plan: ProjectPlan,
+  opts?: { nudge?: boolean; rejectReason?: string },
+): OfficeTask {
   const planSubId = String(task.meta.planSubtaskId ?? "");
-  const text = [
+  const acceptance = String(task.meta.acceptance ?? "");
+  const humanAnswer =
+    typeof task.meta.humanAnswer === "string" ? task.meta.humanAnswer : "";
+  const lines = [
     `[Sous-tâche PM · ${plan.title} · ${planSubId}]`,
     task.title,
     "",
     task.brief.slice(0, 1200),
-    "",
-    "Livre un résultat concret et concis. Ne spawn pas d’autres agents.",
-  ].join("\n");
+  ];
+  if (acceptance) {
+    lines.push("", `Critère d'acceptation: ${acceptance}`);
+  }
+  if (humanAnswer) {
+    lines.push("", `Réponse humaine à prendre en compte: ${humanAnswer}`);
+  }
+  if (opts?.nudge) {
+    lines.push(
+      "",
+      "RELANCE: la sous-tâche est en retard. Livre un résultat concret maintenant (pas de report).",
+    );
+  }
+  if (opts?.rejectReason) {
+    lines.push(
+      "",
+      `Livrable précédent refusé: ${opts.rejectReason}. Reprends et améliore.`,
+    );
+  }
+  lines.push("", "Livre un résultat concret et concis. Ne spawn pas d’autres agents.");
+
+  const text = lines.join("\n");
+
+  if (task.assigneeAgentId) {
+    cancelQueuedOfficeCommands(task.assigneeAgentId);
+  }
 
   const cmd = enqueueOfficeCommand(task.assigneeAgentId || "openclaw:chef", "message", {
     text,
@@ -376,6 +501,7 @@ function enqueueSubtaskWork(task: OfficeTask, project: AiProject, plan: ProjectP
     forceOpenClaw: true,
     pmSubtask: true,
     planSubtaskId: planSubId,
+    ...(opts?.nudge ? { pmNudge: true } : {}),
   });
 
   return (
@@ -386,7 +512,12 @@ function enqueueSubtaskWork(task: OfficeTask, project: AiProject, plan: ProjectP
         phase: "execution",
         commandId: cmd.id,
       },
-      { kind: "status", text: `Commande ${cmd.id.slice(0, 8)} lancée` },
+      {
+        kind: "status",
+        text: opts?.nudge
+          ? `Relance ${cmd.id.slice(0, 8)}`
+          : `Commande ${cmd.id.slice(0, 8)} lancée`,
+      },
     ) ?? task
   );
 }
@@ -690,7 +821,7 @@ export function cancelPmProject(opts: {
 export function blockSubtaskWithQuestion(
   taskId: string,
   question: string,
-  opts?: { toAgentId?: string },
+  opts?: { toAgentId?: string; startMeeting?: boolean },
 ): OfficeTask | null {
   const task = getOfficeTask(taskId);
   if (!task?.projectId) return null;
@@ -714,6 +845,27 @@ export function blockSubtaskWithQuestion(
     { kind: "agent_question", text: question },
   );
 
+  let blockerMeetingStarted = orch.blockerMeetingStarted === true;
+  if (opts?.startMeeting && !blockerMeetingStarted) {
+    try {
+      startAllHandsMeeting({
+        brief: `Blocage projet « ${project.title} » — ${task.title}: ${question}`,
+        facilitatorAgentId: project.agentId || "openclaw:office",
+      });
+      blockerMeetingStarted = true;
+      appendOfficeEvent(project.agentId || "openclaw:office", "agent_message", {
+        text: `Réunion auto lancée pour débloquer « ${task.title} ».`,
+        role: "agent",
+        projectId: project.id,
+        taskId,
+        pmOrchestration: true,
+        meeting: true,
+      });
+    } catch {
+      // réunion non bloquante
+    }
+  }
+
   setOrchestration(project.id, {
     ...orch,
     phase: "awaiting_human",
@@ -722,6 +874,7 @@ export function blockSubtaskWithQuestion(
       text: question,
       toAgentId: opts?.toAgentId,
     },
+    blockerMeetingStarted,
   });
 
   appendOfficeEvent(project.agentId || "openclaw:office", "agent_message", {
@@ -752,13 +905,41 @@ export function answerBlockedQuestion(
       return { ok: d.ok, reply: d.reply };
     }
     if (gate === "revise") {
+      const children = listChildTasks(orch.rootTaskId);
+      const review =
+        children.find((c) => c.meta.planSubtaskId === "review") ??
+        children.filter((c) => c.status === "done").at(-1);
+      if (review) {
+        updateOfficeTask(
+          review.id,
+          {
+            status: "queued",
+            phase: "execution",
+            commandId: null,
+            resultSummary: null,
+            meta: {
+              revisionNote: humanText.slice(0, 500),
+              humanAnswer: humanText.slice(0, 1000),
+              nudgeCount: 0,
+              timeoutEscalated: false,
+            },
+          },
+          { kind: "status", text: "Reprise après révision livraison" },
+        );
+      }
       setOrchestration(projectId, {
         ...orch,
         phase: "executing",
         pendingGate: null,
         revisionNotes: [...orch.revisionNotes, humanText.slice(0, 400)],
       });
-      return { ok: true, reply: "Livraison en révision — précise ce qu’il manque." };
+      tickOrchestration(projectId);
+      return {
+        ok: true,
+        reply: review
+          ? `Livraison en révision — reprise de « ${review.title} ».`
+          : "Livraison en révision — précise ce qu’il manque.",
+      };
     }
   }
 
@@ -773,9 +954,15 @@ export function answerBlockedQuestion(
     task.id,
     {
       status: "queued",
+      phase: "execution",
+      commandId: null,
       meta: {
         blockedQuestion: null,
         humanAnswer: humanText.slice(0, 1000),
+        retryCount: 0,
+        nudgeCount: 0,
+        timeoutEscalated: false,
+        lastError: null,
       },
     },
     { kind: "human_answer", text: humanText.slice(0, 400) },
@@ -787,7 +974,15 @@ export function answerBlockedQuestion(
     blockedQuestion: null,
   });
 
-  tickOrchestration(projectId);
+  const plan = orch.planDraft;
+  const freshTask = getOfficeTask(task.id)!;
+  if (plan) {
+    enqueueSubtaskWork(freshTask, project, plan, {
+      rejectReason: undefined,
+    });
+  } else {
+    tickOrchestration(projectId);
+  }
   const reply = `Réponse prise en compte. Reprise de « ${task.title} ».`;
   appendOfficeEvent(project.agentId || "openclaw:office", "agent_message", {
     text: reply,
@@ -831,21 +1026,69 @@ export function processPmAfterCommand(
   }
 
   const processed = [...orch.processedCommands, commandId].slice(-200);
+  const acceptance = typeof task.meta.acceptance === "string" ? task.meta.acceptance : "";
 
-  if (status === "failed") {
+  const softFail =
+    status === "failed"
+      ? ({
+          ok: false as const,
+          reason: resultText.slice(0, 200) || "échec commande",
+        } satisfies SubtaskAssessment)
+      : assessSubtaskDelivery(resultText, acceptance);
+
+  // Question / info manquante → HITL immédiat (ne brûle pas tous les retries)
+  if (!softFail.ok && softFail.needsHuman) {
+    updateOfficeTask(
+      task.id,
+      {
+        status: "blocked",
+        phase: "execution",
+        resultSummary: resultText.slice(0, 2000),
+        meta: {
+          awaitingHumanInfo: true,
+          lastError: softFail.reason,
+        },
+      },
+      { kind: "agent_question", text: softFail.question || softFail.reason, fromAgent: agentId },
+    );
+    blockSubtaskWithQuestion(
+      task.id,
+      softFail.question ||
+        `L’agent a besoin d’une info pour « ${task.title} »: ${resultText.slice(0, 240)}`,
+      { startMeeting: false },
+    );
+    const fresh = getOrchestration(getAiProject(project.id)!)!;
+    setOrchestration(project.id, { ...fresh, processedCommands: processed });
+    return getOfficeTask(orch.rootTaskId);
+  }
+
+  if (!softFail.ok) {
     const retries = Number(task.meta.retryCount ?? 0);
-    if (retries < 1) {
+    if (retries < SUBTASK_MAX_RETRIES) {
       updateOfficeTask(
         task.id,
         {
           status: "queued",
-          meta: { retryCount: retries + 1, lastError: resultText.slice(0, 500) },
+          meta: {
+            retryCount: retries + 1,
+            lastError: softFail.reason || resultText.slice(0, 500),
+            lastRejectReason: softFail.reason,
+          },
           commandId: null,
         },
-        { kind: "status", text: "Retry automatique 1/1" },
+        {
+          kind: "status",
+          text: `Retry ${retries + 1}/${SUBTASK_MAX_RETRIES}: ${softFail.reason ?? "livrable insuffisant"}`,
+        },
       );
       setOrchestration(project.id, { ...orch, processedCommands: processed, phase: "executing" });
-      tickOrchestration(project.id);
+      const plan = orch.planDraft;
+      if (plan) {
+        const fresh = getOfficeTask(task.id)!;
+        enqueueSubtaskWork(fresh, project, plan, { rejectReason: softFail.reason });
+      } else {
+        tickOrchestration(project.id);
+      }
       return getOfficeTask(orch.rootTaskId);
     }
     updateOfficeTask(
@@ -855,11 +1098,12 @@ export function processPmAfterCommand(
         phase: "failed",
         resultSummary: resultText.slice(0, 2000),
       },
-      { kind: "status", text: "Échec sous-tâche", fromAgent: agentId },
+      { kind: "status", text: "Échec sous-tâche après retries", fromAgent: agentId },
     );
     blockSubtaskWithQuestion(
       task.id,
-      `Échec de « ${task.title} »: ${resultText.slice(0, 200)}. Que faire ?`,
+      `Échec de « ${task.title} »: ${softFail.reason || resultText.slice(0, 200)}. Que faire ?`,
+      { startMeeting: true },
     );
     const fresh = getOrchestration(getAiProject(project.id)!)!;
     setOrchestration(project.id, { ...fresh, processedCommands: processed });
@@ -885,28 +1129,129 @@ export function processPmAfterCommand(
   return getOfficeTask(orch.rootTaskId);
 }
 
-/** Escalade si sous-tâche working/blocked trop longtemps. */
-export function processPmTimeouts(nowMs = Date.now()): number {
+/**
+ * Raccroche les sous-tâches PM dont la commande est morte (failed/done non traité, missing, claimed périmé).
+ */
+export function reconcileOrphanPmSubtasks(nowMs = Date.now()): number {
   let n = 0;
   for (const project of getActivePmProjects()) {
     const orch = getOrchestration(project);
+    if (!orch || orch.phase === "awaiting_plan_approval" || orch.phase === "awaiting_human") continue;
+    if (orch.phase === "awaiting_delivery_approval") continue;
+
+    for (const c of listChildTasks(orch.rootTaskId)) {
+      if (c.status !== "working" && c.status !== "thinking") continue;
+      const cmdId = c.commandId;
+      if (!cmdId) {
+        updateOfficeTask(c.id, { status: "queued" }, { kind: "status", text: "Reprise sans commande" });
+        if (orch.planDraft) enqueueSubtaskWork(getOfficeTask(c.id)!, project, orch.planDraft);
+        n += 1;
+        continue;
+      }
+      const cmd = getOfficeCommand(cmdId);
+      if (!cmd) {
+        updateOfficeTask(
+          c.id,
+          { status: "queued", commandId: null },
+          { kind: "status", text: "Commande introuvable — requeue" },
+        );
+        if (orch.planDraft) enqueueSubtaskWork(getOfficeTask(c.id)!, project, orch.planDraft);
+        n += 1;
+        continue;
+      }
+      if (cmd.status === "claimed") {
+        const age = nowMs - new Date(cmd.updatedAt).getTime();
+        if (age >= OFFICE_CLAIM_STALE_MS) {
+          const before = getOfficeCommand(cmdId);
+          if (before && before.status === "claimed") {
+            completeOfficeCommand(cmdId, "failed", "Pas de réponse du Mac (commande expirée). Réessaie.");
+            processPmAfterCommand(
+              cmdId,
+              c.assigneeAgentId || cmd.agentId,
+              "failed",
+              "Pas de réponse du Mac (commande expirée). Réessaie.",
+              c.id,
+            );
+            n += 1;
+          }
+        }
+        continue;
+      }
+      if (cmd.status === "done" || cmd.status === "failed") {
+        if (orch.processedCommands.includes(cmdId)) continue;
+        processPmAfterCommand(
+          cmdId,
+          c.assigneeAgentId || cmd.agentId,
+          cmd.status === "failed" ? "failed" : "done",
+          cmd.result || (cmd.status === "failed" ? "échec" : "done"),
+          c.id,
+        );
+        n += 1;
+      }
+    }
+  }
+  return n;
+}
+
+/**
+ * Watchdog PM : reconcile orphelins + tick DAG + nudge + escalade.
+ * Appelé par le cron récurrent (bridge Mac ~1 min).
+ */
+export function processPmTimeouts(nowMs = Date.now()): number {
+  let n = reconcileOrphanPmSubtasks(nowMs);
+
+  for (const project of getActivePmProjects()) {
+    const orch = getOrchestration(project);
     if (!orch || orch.phase === "awaiting_plan_approval") continue;
+
+    if (orch.phase === "executing" && orch.planDraft) {
+      tickOrchestration(project.id);
+    }
+
     const children = listChildTasks(orch.rootTaskId);
     for (const c of children) {
-      if (c.status !== "working" && c.status !== "blocked" && c.status !== "thinking") continue;
+      if (c.status !== "working" && c.status !== "thinking") continue;
       const age = nowMs - new Date(c.updatedAt).getTime();
-      if (age < SUBTASK_TIMEOUT_MS) continue;
+      const nudgeCount = Number(c.meta.nudgeCount ?? 0);
+
       if (c.meta.timeoutEscalated === true) continue;
-      updateOfficeTask(
-        c.id,
-        { meta: { timeoutEscalated: true } },
-        { kind: "status", text: "Timeout — escalade humain" },
-      );
-      blockSubtaskWithQuestion(
-        c.id,
-        `Timeout (${Math.round(age / 60_000)} min) sur « ${c.title} ». Continuer, annuler ou préciser ?`,
-      );
-      n += 1;
+
+      if (age >= SUBTASK_TIMEOUT_MS || nudgeCount >= SUBTASK_MAX_NUDGES) {
+        updateOfficeTask(
+          c.id,
+          { meta: { timeoutEscalated: true } },
+          { kind: "status", text: "Timeout — escalade humain" },
+        );
+        blockSubtaskWithQuestion(
+          c.id,
+          `Timeout (${Math.round(age / 60_000)} min) sur « ${c.title} ». Continuer, annuler ou préciser ?`,
+          { startMeeting: true },
+        );
+        n += 1;
+        continue;
+      }
+
+      if (age >= SUBTASK_NUDGE_MS && orch.planDraft) {
+        const lastNudgeAt =
+          typeof c.meta.lastNudgeAt === "string" ? Date.parse(c.meta.lastNudgeAt) : 0;
+        if (lastNudgeAt && nowMs - lastNudgeAt < SUBTASK_NUDGE_MS) continue;
+
+        updateOfficeTask(
+          c.id,
+          {
+            status: "queued",
+            commandId: null,
+            meta: {
+              nudgeCount: nudgeCount + 1,
+              lastNudgeAt: new Date(nowMs).toISOString(),
+            },
+          },
+          { kind: "status", text: `Nudge agent ${nudgeCount + 1}/${SUBTASK_MAX_NUDGES}` },
+        );
+        const fresh = getOfficeTask(c.id)!;
+        enqueueSubtaskWork(fresh, project, orch.planDraft, { nudge: true });
+        n += 1;
+      }
     }
   }
   return n;

@@ -10,12 +10,14 @@ import {
 } from "@/lib/office/scenario-helpers";
 import { processMeetingTimeouts } from "@/lib/office/meeting";
 import { processPmTimeouts } from "@/lib/office/project-orchestrator";
+import { failStaleClaimedOfficeCommands } from "@/lib/db/office";
 
 export type RecurringTickResult = {
   ticked: number;
   projectIds: string[];
   meetingTimeout: boolean;
   pmTimeouts: number;
+  staleCommands: number;
 };
 
 function tickMessage(project: AiProject): string {
@@ -34,7 +36,7 @@ function resolveTickAgent(project: AiProject): string {
   return "openclaw:mgr-dev";
 }
 
-/** Exécute les projets récurrents dus + timeouts réunion en attente. */
+/** Exécute les projets récurrents dus + timeouts réunion + watchdog PM (nudge/escalade). */
 export function tickDueRecurringProjects(nowIso = new Date().toISOString()): RecurringTickResult {
   const due = listDueRecurringProjects(nowIso);
   const projectIds: string[] = [];
@@ -54,6 +56,7 @@ export function tickDueRecurringProjects(nowIso = new Date().toISOString()): Rec
     projectIds.push(project.id);
   }
 
+  const staleCommands = failStaleClaimedOfficeCommands(Date.now());
   const meetingTimeout = Boolean(processMeetingTimeouts(Date.now()));
   const pmTimeouts = processPmTimeouts(Date.now());
 
@@ -62,5 +65,6 @@ export function tickDueRecurringProjects(nowIso = new Date().toISOString()): Rec
     projectIds,
     meetingTimeout,
     pmTimeouts,
+    staleCommands,
   };
 }

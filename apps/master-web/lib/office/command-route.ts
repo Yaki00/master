@@ -29,9 +29,17 @@ export async function handleOfficeAct(req: Request) {
 
   if (kindRaw === "clear") {
     const { clearOfficeEvents, getAggregatedOfficeAgent } = await import("@/lib/db/office");
+    const { listOfficeConversations } = await import("@/lib/db/office-conversations");
     const n = clearOfficeEvents(agentId);
+    const archives = listOfficeConversations(agentId, { status: "archived", limit: 10 });
     return withOfficeSecurity(
-      NextResponse.json({ ok: true, cleared: n, agent: getAggregatedOfficeAgent(agentId) }),
+      NextResponse.json({
+        ok: true,
+        cleared: n,
+        archived: archives[0] ?? null,
+        conversations: archives,
+        agent: getAggregatedOfficeAgent(agentId),
+      }),
     );
   }
 

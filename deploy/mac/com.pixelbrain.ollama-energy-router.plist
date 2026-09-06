@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pixelbrain.ollama-energy-router</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/yaki/.nvm/versions/node/v24.19.0/bin/node</string>
+    <string>/Users/yaki/Documents/code/Master/apps/ollama-energy-router/src/server.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/yaki/Documents/code/Master/apps/ollama-energy-router</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OLLAMA_BASE_URL</key>
+    <string>http://127.0.0.1:11434</string>
+    <key>ROUTER_PORT</key>
+    <string>11435</string>
+    <key>MODEL_FAST</key>
+    <string>qwen2.5-7b-64k:latest</string>
+    <key>MODEL_AGENT</key>
+    <string>qwen3-coder-30b-64k:latest</string>
+    <key>MODEL_HEAVY</key>
+    <string>qwen2.5-32b-64k:latest</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/yaki/Library/Logs/ollama-energy-router/out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/yaki/Library/Logs/ollama-energy-router/err.log</string>
+</dict>
+</plist>

@@ -4,6 +4,7 @@ import {
   parsePmPlanGateReply,
   parsePmProjectStart,
   parsePmStatusQuery,
+  looksLikePmWork,
 } from "./pm-intent";
 
 describe("pm-intent", () => {
@@ -19,12 +20,33 @@ describe("pm-intent", () => {
     expect(parsePmProjectStart("projet complexe alerte quotidienne")).toBeTruthy();
   });
 
-  it("ignore sentinelle simple et chat banal", () => {
+  it("détecte missions / délégations sans formule magique", () => {
+    expect(
+      parsePmProjectStart(
+        "Délègue une mission complète : analyser le marché GPU et proposer un plan d'achat",
+      ),
+    ).toBeTruthy();
+    expect(
+      parsePmProjectStart(
+        "Je veux que tu coordonnes l'équipe pour préparer un rapport de veille eBay sur les RTX",
+      ),
+    ).toBeTruthy();
+    expect(
+      looksLikePmWork(
+        "Analyse le marché des cartes graphiques et prépare une synthèse actionnable pour demain",
+      ),
+    ).toBe(true);
+  });
+
+  it("ignore sentinelle simple, réunion et chat banal", () => {
     expect(parsePmProjectStart("surveille RTX 4090 toutes les 15 min")).toBeNull();
     expect(
       parsePmProjectStart('Crée un projet « Sentinelle 4090 » récurrent pour surveiller RTX'),
     ).toBeNull();
     expect(parsePmProjectStart("salut")).toBeNull();
+    expect(
+      parsePmProjectStart("réunion avec tout le monde pour trouver le meilleur objet"),
+    ).toBeNull();
   });
 
   it("gate plan", () => {

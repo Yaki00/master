@@ -6,7 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const wide = pathname.startsWith("/agents");
+  const wide = pathname.startsWith("/agents") || pathname.startsWith("/projets");
 
   return (
     <MetricsProvider>
