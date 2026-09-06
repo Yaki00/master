@@ -11,6 +11,7 @@ const NAV = [
   { href: "/agents", label: "Agents", icon: "♟" },
   { href: "/projets", label: "Projets", icon: "▤" },
   { href: "/vps", label: "VPS", icon: "⬡" },
+  { href: "/pc", label: "PC fixe", icon: "▣" },
   { href: "/apps", label: "Applications", icon: "◫" },
   { href: "/n8n", label: "n8n", icon: "⚡" },
   { href: "/notifications", label: "Notifications", icon: "🔔", notifBadge: true },

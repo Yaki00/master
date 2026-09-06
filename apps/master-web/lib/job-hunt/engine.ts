@@ -83,16 +83,23 @@ export function handleJobHuntJobComplete(input: {
         message: "CV et lettre adaptés par l'agent",
       });
     } else if (input.status === "failed") {
+      // Skip après échec pour éviter une boucle auto (ex. parse_fail × 40 étapes).
       updateJobHuntListing(parsed.listingId, {
-        status: "reviewed",
+        status: "skipped",
         agentError: error || resultText.slice(0, 500),
         pcJobId: null,
       });
       appendJobHuntEvent({
         listingId: parsed.listingId,
         kind: "apply_failed",
-        message: "Échec adaptation CV",
+        message: "Échec adaptation CV — offre passée en skip",
         payload: { error: error.slice(0, 300) },
+      });
+    } else if (input.status === "cancelled") {
+      updateJobHuntListing(parsed.listingId, {
+        status: "skipped",
+        agentError: error || "annulé",
+        pcJobId: null,
       });
     }
     return;

@@ -36,6 +36,15 @@ export async function POST(req: Request) {
     return withSecurity(NextResponse.json({ error: "not found" }, { status: 404 }));
   }
 
+  // Ne pas écraser un stop manuel — le worker PC peut finir sa boucle locale après coup.
+  if (existing.status === "cancelled") {
+    appendJobEvent(jobId, "complete_ignored", {
+      reason: "already cancelled",
+      workerStatus: body.status ?? null,
+    });
+    return withSecurity(NextResponse.json({ ok: true, job: existing, ignored: true }));
+  }
+
   const rawStatus = String(body.status ?? "completed");
   const status =
     rawStatus === "failed" ? "failed" : rawStatus === "paused" ? "paused" : "completed";
