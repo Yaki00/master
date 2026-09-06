@@ -2,12 +2,18 @@
 deploy/.env
 *.sql.gz
 .cursor/secrets/mcp.env
+.cursor/secrets/
 data/clients.json
 apps/master-web/data/
 node_modules/
 **/node_modules/
 apps/*/.env
 deploy/pc/.env
+deploy/master-panel/.env
+
+# Runtime / logs
+**/logs/
+*.log
 
 # Build / cache
 **/.next/
@@ -15,4 +21,5 @@ deploy/pc/.env
 **/.turbo/
 *.tsbuildinfo
 .DS_Store
+.opencode/node_modules/
 
